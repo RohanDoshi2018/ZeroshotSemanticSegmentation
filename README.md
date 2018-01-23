@@ -6,7 +6,7 @@
 - Part of the [Princeton VisualAI Lab](http://visualai.princeton.edu/people.html) 
 
 ## Project Overview
-We propose a novel computer vision task: zero-shot learning for semantic segmentation. We are building upon the work of DeViSE, but making predictions at a pixel-level, which hasn't been explored before.
+We propose a novel computer vision task: zero-shot semantic segmentation. We are building upon the work of [DeViSE](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/41473.pdf), but making predictions at a pixel-level as opposed to an image-level, which hasn't been explored before.
 
 Our methodology maps mapping pixel-label pairs into a joint-embedding space. A visual model maps the pixels in an image to pixel-embeddings, and a semantic model maps the corresponding labels to semantic-embeddings. A mean square loss is used to minimize the distance between visual-embeddings and semantic-embeddings in the joint-embedding space (normally between 20 and 100 dimensions, depending on GPU constraints).
 
