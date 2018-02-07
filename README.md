@@ -57,7 +57,7 @@ What is the optimal size of the joint-embedding space? How can we make the model
 
 2. Clone repository
 ```bash
-git clone https://github.com/rkdoshi/ZeroshotSemanticSegmentation.git
+git clone https://github.com/RohanDoshi2018/ZeroshotSemanticSegmentation.git
 cd ZeroshotSemanticSegmentation
 ```
 
