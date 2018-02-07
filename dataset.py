@@ -7,7 +7,10 @@ import PIL.Image
 import scipy.io
 import torch
 from torch.utils import data
+import utils
 import pickle
+
+data_dir = open('data_dir.txt', 'r').read()
 
 class VOCClassSegBase(data.Dataset):
     class_names = np.array([
@@ -41,14 +44,10 @@ class VOCClassSegBase(data.Dataset):
         self.embed_dim = embed_dim # of dimensions for the embed_dim-embeddings
 
         if self.embed_dim:
-            embeddings_dict = torchfcn.utils.load_obj('embeddings/label2vec_dict_' + str(self.embed_dim))
-            num_classes = embeddings_dict.shape[0] #  21 = background (class 0) + labels (class 1-20)
-            self.embeddings = torch.nn.Embedding(num_classes, embed_dim)
-            self.embeddings.weight.requires_grad = False
-            self.embeddings.weight.data.copy_(torch.from_numpy(embeddings_dict))
+            self.init_embeddings()
 
         # VOC2011 and others are subset of VOC2012
-        dataset_dir = 'data/VOC2012'
+        dataset_dir = data_dir + '/pascal/VOC2012'
         self.files = collections.defaultdict(list)
         for split in ['train', 'val']:
             imgsets_file = osp.join(dataset_dir, 'ImageSets/Segmentation/%s.txt' % split)
@@ -58,7 +57,14 @@ class VOCClassSegBase(data.Dataset):
                 lbl_file = osp.join(dataset_dir, 'SegmentationClass/%s.png' % did)
                 self.files[split].append({'img': img_file, 'lbl': lbl_file,})
 
-    def __len__(self):          
+    def init_embeddings(self):
+        embeddings_dict = utils.load_obj('embeddings/label2vec_arr_' + str(self.embed_dim))
+        num_classes = embeddings_dict.shape[0] #  21 = background (class 0) + labels (class 1-20)
+        self.embeddings = torch.nn.Embedding(num_classes, self.embed_dim)
+        self.embeddings.weight.requires_grad = False
+        self.embeddings.weight.data.copy_(torch.from_numpy(embeddings_dict))
+
+    def __len__(self):         
         return len(self.files[self.split])
 
     def __getitem__(self, index):
@@ -113,8 +119,8 @@ class VOC2011ClassSeg(VOCClassSegBase):
             split=split, transform=transform, embed_dim=embed_dim)
         if self.embed_dim:
             embeddings_dict = utils.load_obj('embeddings/label2vec_arr_' + str(embed_dim))
-        imgsets_file = 'fcn.berkeleyvision.org/data/pascal/seg11valid.txt'
-        dataset_dir = 'data/VOC2012'
+        imgsets_file = data_dir + '/pascal/seg11valid.txt'
+        dataset_dir = data_dir + '/pascal/VOC2012'
         for did in open(imgsets_file):
             did = did.strip()
             img_file = osp.join(dataset_dir, 'JPEGImages/%s.jpg' % did)
@@ -139,14 +145,11 @@ class SBDClassSeg(VOCClassSegBase):
         self.split = split
         self._transform = transform
         self.embed_dim = embed_dim # of dimensions for the embed_dim-embeddings
-        if self.embed_dim:   
-            embeddings_dict = torchfcn.utils.load_obj('embeddings/label2vec_arr_' + str(self.embed_dim))
-            num_classes = embeddings_dict.shape[0] #  21 = background (class 0) + labels (class 1-20)
-            self.embeddings = torch.nn.Embedding(num_classes, embed_dim)
-            self.embeddings.weight.requires_grad = False
-            self.embeddings.weight.data.copy_(torch.from_numpy(embeddings_dict))
 
-        dataset_dir = 'data/benchmark_RELEASE/dataset'
+        if self.embed_dim:
+            self.init_embeddings()
+
+        dataset_dir = data_dir + '/pascal/benchmark_RELEASE/dataset'
         self.files = collections.defaultdict(list)
         for split in ['train', 'val']:
             imgsets_file = osp.join(dataset_dir, '%s.txt' % split)

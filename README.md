@@ -15,7 +15,7 @@ The visual model is adapted from a Fully Convolutional Network (FCN) implemented
 
 The semantic model takes a [Word2Vec](https://radimrehurek.com/gensim/models/word2vec.html) model and reduces pre-trained 300-dimension word embeddings (trained on the Google News corpus of 3B words) via PCA to the joint embedding. These semantic-embeddings are taken as static "ground truths" in the joint-embedding embedding; during train, the visual model tries to map pixel-embeddings to the corresponding semantic-embeddings.
 
-Initially, we are working with the Semantic Boundaries Dataset, a supplemented version of PASCAL-VOC 2011 with ~6000 training and ~2000 validation images. PASCAL-VOC has 20 classes + background. We train the visual model on pixel-label pairs across a subset of 10 classes. And, we test with predictions across all 21 classes. We use nearest neighboring embedding (NNE) to predict semantic-embedding labels for each pixel-embedding in the joint-embedding space.
+Initially, we are working with the Semantic Boundaries Dataset, a supplemented version of PASCAL-VOC 2011 with ~6000 training and ~2000 validation images. PASCAL-VOC has 20 classes + background. We train the visual model on pixel-label pairs across a subset of 10 classes. And, we test with predictions across all 21 classes. We use nearest neighboring embedding (NNE) to predict labels for each pixel-embedding.
 
 
 #### What's Been Done
@@ -51,9 +51,7 @@ What is the optimal size of the joint-embedding space? How can we make the model
 
 ## Installation
 
-** Requirements: **  Conda (with Python 3)
-
-Note that this code has been written with Linux/OSX in mind; it might need modifications for other OS.
+** Requirements: **  Conda (with Python 3) and Linux
 
 1. Install Conda 
 
@@ -71,13 +69,11 @@ conda env create -f thesis.yml
 4. Activate your conda environment
 source activate thesis
 
-5. Run code
+5. Set your directory to store
+Edit the path in data_dir.py if you want to store logs/models/dataset files in another path.
+
+6. Run code
 ```
-./download_dataset.sh <your dataset directory>;
-
-# option 1: softmax baseline
-python train.py;
-
-# option 2: using joint-embedding model (50-dimensions)
-python train.py -e 50 -c 2;
+./download_dataset.sh;
+python train.py -c 1;
 ```

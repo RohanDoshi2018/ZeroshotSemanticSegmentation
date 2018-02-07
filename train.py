@@ -10,43 +10,42 @@ import torch
 import yaml
 import dataset, models, trainer
 import torch.nn as nn
-
+import subprocess
 
 configurations = {
-    # same configuration as original work
-    # https://github.com/shelhamer/fcn.berkeleyvision.org
+    # no embeddings, softmax output
     1: dict(
-        max_iteration=100000,
         lr=1.0e-10,
         momentum=0.99,
         weight_decay=0.0005,
-		interval_validate=4000,
+        embed_dim=None,
+        zeroshot=False,
     ),
 
-    # embeddings, minimal validation
+    # 50D embeddings
     2: dict(
-        max_iteration=100000,
         lr=1.0e-15,
         momentum=0.99,
         weight_decay=.0005,
-        interval_validate=10000,
+        embed_dim=50,
+        zeroshot=False,
     ),
 }
 
+data_dir = open('data_dir.txt', 'r').read()
 
-def get_log_dir(model_name, config_id, cfg, embed_dim=None):
-    name = '%s_CFG-%03d' % (model_name, config_id)
+def get_log_dir(model_name, cfg):
+    if model_name:
+        name = '%s' % model_name
+    else:
+        name = ''
     for k, v in cfg.items():
-        v = str(v)
-        if '/' in v:
-            continue
-        name += '_%s-%s' % (k.upper(), v)
+        name += '_%s_%s' % (k.upper(), str(v))
     now = datetime.datetime.now(pytz.timezone('US/Eastern'))
     name += '_TIME-%s' % now.strftime('%Y%m%d-%H%M%S')
-    if embed_dim:
-        name += '_EMBED-DIM-%d' % embed_dim
-    # create out
-    log_dir = osp.join(here, 'logs', name)
+
+    # output
+    log_dir = osp.join(data_dir, 'logs', name)
     if not osp.exists(log_dir):
         os.makedirs(log_dir)
     with open(osp.join(log_dir, 'config.yaml'), 'w') as f:
@@ -77,27 +76,23 @@ def get_parameters(model, bias=False):
         else:
             raise ValueError('Unexpected module: %s' % str(m))
 
-
-here = osp.dirname(osp.abspath(__file__))
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', type=str, default="fcn32s", help='Name of checkpoint folder')
+    parser.add_argument('--name', type=str, default=None, help='Name of checkpoint folder')
     parser.add_argument('-g', '--gpu', type=int, default=0, required=False)
-    parser.add_argument('-e', '--embed_dim', type=int, default=-1)
     parser.add_argument('-c', '--config', type=int, default=1, choices=configurations.keys())
     parser.add_argument('--resume', help='Checkpoint path')
+    parser.add_argument("--max_epoch", default=15, type=int, help="maximum number of training epochs")
+    parser.add_argument("--dataset", type=str, default="pascal", help="pascal") # TODO: add other datasets here eventually
     args = parser.parse_args()
 
     gpu = args.gpu
-
-    if args.embed_dim is not -1:
-        embed_dim = args.embed_dim
-    else:
-        embed_dim = None
-
+    max_epoch = args.max_epoch
     cfg = configurations[args.config]
-    out = get_log_dir(args.name, args.config, cfg, embed_dim)
+    embed_dim = cfg['embed_dim']
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+    out = get_log_dir(args.name, cfg)
     resume = args.resume
 
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
@@ -108,7 +103,6 @@ def main():
         torch.cuda.manual_seed(1337)
 
     # 1. dataset
-
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
         dataset.SBDClassSeg(split='train', transform=True, embed_dim=embed_dim),
@@ -144,6 +138,7 @@ def main():
         lr=cfg['lr'],
         momentum=cfg['momentum'],
         weight_decay=cfg['weight_decay'])
+
     if resume:
         optim.load_state_dict(checkpoint['optim_state_dict'])
 
@@ -154,8 +149,7 @@ def main():
         train_loader=train_loader,
         val_loader=val_loader,
         out=out,
-        max_iter=cfg['max_iteration'],
-        interval_validate=cfg.get('interval_validate', len(train_loader)),
+        max_epoch=max_epoch,
 		pixel_embeddings=embed_dim
     )
     fcn_trainer.epoch = start_epoch

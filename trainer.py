@@ -13,13 +13,12 @@ import torch.nn.functional as F
 import tqdm
 import pickle
 import utils
-import utils 
 
 class Trainer(object):
 
     def __init__(self, cuda, model, optimizer,
-                    train_loader, val_loader, out, max_iter,
-                    size_average=False, interval_validate=None,
+                    train_loader, val_loader, out, max_epoch,
+                    size_average=False,
                     pixel_embeddings=None):
         self.cuda = cuda
         self.model = model
@@ -36,11 +35,6 @@ class Trainer(object):
                 self.embeddings = torch.from_numpy(self.embeddings).cuda().float()
             else:
                 self.embeddings = torch.from_numpy(self.embeddings).float()
-
-        if interval_validate is None:
-            self.interval_validate = len(self.train_loader)
-        else:
-            self.interval_validate = interval_validate
 
         self.out = out
         if not osp.exists(self.out):
@@ -65,13 +59,11 @@ class Trainer(object):
             with open(osp.join(self.out, 'log.csv'), 'w') as f:
                 f.write(','.join(self.log_headers) + '\n')
         self.epoch = 0
-        self.validation_epoch = 0
         self.iteration = 0
-        self.max_iter = max_iter
+        self.max_epoch = max_epoch
         self.best_mean_iu = 0
 
     def validate(self):
-        training = self.model.training
         self.model.eval()
 
         n_class = len(self.val_loader.dataset.class_names)
@@ -81,12 +73,15 @@ class Trainer(object):
         label_trues, label_preds = [], []
 
         for batch_idx, (data, target) in enumerate(self.val_loader):
+
             if self.pixel_embeddings:
                 target, target_embed = target
             
             if self.cuda:
                 data, target = data.cuda(), target.cuda()
-            data, target = Variable(data, volatile=True), Variable(target)
+            data, target = Variable(data), Variable(target)
+
+            print(len(data))
 
             if self.pixel_embeddings:
                 if self.cuda:
@@ -96,23 +91,22 @@ class Trainer(object):
             score = self.model(data)
             
             if self.pixel_embeddings:
-                loss = utils.mse_embedding(score, target, target_embed, size_average=self.size_average)
+                loss = utils.mse_embedding(score, target, target_embed, size_average=self.size_average) # TODO: fix this
             else:
                 loss = utils.cross_entropy2d(score, target, size_average=self.size_average)
 
             if np.isnan(float(loss.data[0])):
                 raise ValueError('loss is nan while validating')
-            val_loss += float(loss.data[0]) / len(data)
 
+            val_loss += float(loss.data[0])
 
-            print("Test Epoch %d | Iteration %d | Loss %f" % (self.validation_epoch, self.iteration, val_loss))
-            print(self.model.score_fr.weight.sum())
+            print("Test Epoch %d | Iteration %d | Loss %.1f" % (self.epoch, batch_idx, val_loss))
 
             imgs = data.data.cpu()
             if self.pixel_embeddings:	
-                lbl_pred = utils.get_lbl_pred(score, self.embeddings, self.cuda)
+                lbl_pred = utils.get_lbl_pred(score, self.embeddings, self.cuda) # TODO: fix lbl_pred
             else:
-                lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
+                lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :] # TODO: fix lbl_pred
             lbl_true = target.data.cpu()
 
             for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
@@ -120,31 +114,26 @@ class Trainer(object):
                 label_trues.append(lt)
                 label_preds.append(lp)
                 if len(visualizations) < 9:
-                    viz = fcn.utils.visualize_segmentation(
-                        lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class)
+                    viz = fcn.utils.visualize_segmentation(lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class)
                     visualizations.append(viz)
 
-        metrics = utils.label_accuracy_score(label_trues, label_preds, n_class)
+        metrics = utils.label_accuracy_score(label_trues, label_preds, n_class) # TODO: understand this
         out = osp.join(self.out, 'visualization_viz')
         if not osp.exists(out):
             os.makedirs(out)
-        out_file = osp.join(out, 'iter%012d.jpg' % self.iteration)
+        out_file = osp.join(out, 'epoch%d.jpg' % self.epoch)
         scipy.misc.imsave(out_file, fcn.utils.get_tile_image(visualizations))
 
         val_loss /= len(self.val_loader)
 
         with open(osp.join(self.out, 'log.csv'), 'a') as f:
-            elapsed_time = \
-                datetime.datetime.now(pytz.timezone('US/Eastern')) - \
-                self.timestamp_start
-            log = [self.epoch, self.iteration] + [''] * 5 + \
-                  [val_loss] + list(metrics) + [elapsed_time]
+            elapsed_time = datetime.datetime.now(pytz.timezone('US/Eastern')) - self.timestamp_start
+            log = [self.epoch, self.iteration] + [''] * 5 + [val_loss] + list(metrics) + [elapsed_time]
             log = map(str, log)
             f.write(','.join(log) + '\n')
 
         mean_iu = metrics[2]
-        is_best = mean_iu > self.best_mean_iu
-        if is_best:
+        if mean_iu > self.best_mean_iu:
             self.best_mean_iu = mean_iu
         torch.save({
             'epoch': self.epoch,
@@ -153,14 +142,9 @@ class Trainer(object):
             'optim_state_dict': self.optim.state_dict(),
             'model_state_dict': self.model.state_dict(),
             'best_mean_iu': self.best_mean_iu,
-        }, osp.join(self.out, 'checkpoint.pth'))
+        }, osp.join(self.out, 'checkpoint')) 
         if is_best:
-            shutil.copy(osp.join(self.out, 'checkpoint.pth'), osp.join(self.out, 'model_best.pth'))
-        
-        self.validation_epoch += 1
-
-        if training:
-            self.model.train()
+            shutil.copy(osp.join(self.out, 'checkpoint'), osp.join(self.out, 'best'))
 
     def train_epoch(self):
         self.model.train()
@@ -168,18 +152,10 @@ class Trainer(object):
         n_class = len(self.train_loader.dataset.class_names)
 
         for batch_idx, (data, target) in enumerate(self.train_loader):
-            iteration = batch_idx + self.epoch * len(self.train_loader)
-            if self.iteration != 0 and (iteration - 1) != self.iteration:
-                continue  # for resuming
-            self.iteration = iteration
-
-            if self.iteration % self.interval_validate == 0:
-               self.validate()
-
-            assert self.model.training
 
             if self.pixel_embeddings:
                  target, target_embed = target
+
             if self.cuda:
                  data, target = data.cuda(), target.cuda()
             data, target = Variable(data), Variable(target)
@@ -189,59 +165,48 @@ class Trainer(object):
                     target_embed = target_embed.cuda()
                 target_embed = Variable(target_embed)
 
-            self.optim.zero_grad()
+            self.optim.zero_grad() # TODO: understand this
             score = self.model(data)
 
             if self.pixel_embeddings:
-                loss = mse_embedding(score, target, target_embed, size_average=self.size_average)
+                loss = utils.mse_embedding(score, target, target_embed, size_average=self.size_average) # TODO: fix this
             else:
-                loss = cross_entropy2d(score, target, size_average=self.size_average)
-
-            loss /= len(data)
+                loss = utils.cross_entropy2d(score, target, size_average=self.size_average)
 
             if np.isnan(float(loss.data[0])):
                 raise ValueError('loss is nan while training')
 
             loss.backward()
-            self.optim.step()
+            self.optim.step() # TODO: understand this in context of loss.backward
             print("Train Epoch %d | Iteration %d | Loss %.1f | score_fr grad sum %.0f | upscore grad sum %.0f | score sum %.0f"  % 
-                            (self.epoch,
-                             self.iteration,
-                             float(loss.data[0]),
-                             float(self.model.score_fr.weight.grad.sum().data[0]),
-                             float(self.model.upscore.weight.grad.sum().data[0]),
-                             float(score.sum().data[0])
-                             ))
+                (self.epoch,
+                 batch_idx,
+                 float(loss.data[0]),
+                 float(self.model.score_fr.weight.grad.sum().data[0]),
+                 float(self.model.upscore.weight.grad.sum().data[0]),
+                 float(score.sum().data[0])
+                ))
 
             metrics = []
             if self.pixel_embeddings: 
-                lbl_pred = utils.get_lbl_pred(score, self.embeddings)
+                lbl_pred = utils.get_lbl_pred(score, self.embeddings, self.cuda) # TODO: fix lbl_pred
             else:
                 lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
-            lbl_true = target.data.cpu().numpy()
+            lbl_true = target.data.cpu().numpy() # TODO: why numpy()
             for lt, lp in zip(lbl_true, lbl_pred):
-                acc, acc_cls, mean_iu, fwavacc = \
-                    utils.label_accuracy_score(
-                        [lt], [lp], n_class=n_class)
+                acc, acc_cls, mean_iu, fwavacc = utils.label_accuracy_score([lt], [lp], n_class=n_class)
                 metrics.append((acc, acc_cls, mean_iu, fwavacc))
             metrics = np.mean(metrics, axis=0)
 
             with open(osp.join(self.out, 'log.csv'), 'a') as f:
-                elapsed_time = (
-                    datetime.datetime.now(pytz.timezone('US/Eastern')) -
-                    self.timestamp_start).total_seconds()
-                log = [self.epoch, self.iteration] + [loss.data[0]] + \
-                    metrics.tolist() + [''] * 5 + [elapsed_time]
+                elapsed_time = (datetime.datetime.now(pytz.timezone('US/Eastern')) - self.timestamp_start).total_seconds()
+                log = [self.epoch, self.iteration] + [loss.data[0]] + metrics.tolist() + [''] * 5 + [elapsed_time]
                 log = map(str, log)
                 f.write(','.join(log) + '\n')
 
-            if self.iteration >= self.max_iter:
-                break
-
     def train(self):
-        max_epoch = int(math.ceil(1. * self.max_iter / len(self.train_loader)))
-        for epoch in range(max_epoch): 
+        self.validate()
+        for epoch in range(self.max_epoch):
             self.epoch = epoch
             self.train_epoch()
-            if self.iteration >= self.max_iter:
-                break
+            self.validate()

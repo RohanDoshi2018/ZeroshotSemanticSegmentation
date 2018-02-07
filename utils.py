@@ -87,11 +87,12 @@ def label_accuracy_score(label_trues, label_preds, n_class):
 
 # get nearest label prediction for pixel embeddings of size (n,c, h, w) 
 # score: torch.Size([1, 50, 366, 500])
+# 
 def get_lbl_pred(score, embed_arr, cuda=False):
   n, c, h, w = score.size()
-  n_classes = embed_arr.shape[0]
+  num_class, num_dim = embed_arr.shape
   embeddings = embed_arr.transpose(1,0).repeat(1,h*w,1,1)
-  score = score.view(1,h*w,c,1).repeat(1,1,1,n_classes)
+  score = score.view(1,h*w,c,1).repeat(1,1,1,num_class)
   dist = score.data - embeddings
   dist = dist.pow(2).sum(2).sqrt()
   min_val, indices = dist.min(2)
