@@ -81,8 +81,6 @@ class Trainer(object):
                 data, target = data.cuda(), target.cuda()
             data, target = Variable(data), Variable(target)
 
-            print(len(data))
-
             if self.pixel_embeddings:
                 if self.cuda:
                     target_embed = target_embed.cuda()
@@ -100,7 +98,7 @@ class Trainer(object):
 
             val_loss += float(loss.data[0])
 
-            print("Test Epoch %d | Iteration %d | Loss %.1f" % (self.epoch, batch_idx, val_loss))
+            print("Test Epoch %d | Iteration %d | Loss %.1f" % (self.epoch, batch_idx, float(loss.data[0])))
 
             imgs = data.data.cpu()
             if self.pixel_embeddings:	
@@ -133,8 +131,10 @@ class Trainer(object):
             f.write(','.join(log) + '\n')
 
         mean_iu = metrics[2]
-        if mean_iu > self.best_mean_iu:
+        is_best = mean_iu > self.best_mean_iu
+        if is_best:
             self.best_mean_iu = mean_iu
+
         torch.save({
             'epoch': self.epoch,
             'iteration': self.iteration,
@@ -143,8 +143,13 @@ class Trainer(object):
             'model_state_dict': self.model.state_dict(),
             'best_mean_iu': self.best_mean_iu,
         }, osp.join(self.out, 'checkpoint')) 
+
         if is_best:
             shutil.copy(osp.join(self.out, 'checkpoint'), osp.join(self.out, 'best'))
+
+        # TODO: eliminate this conditional?
+        if self.model.training: 
+            self.model.train()
 
     def train_epoch(self):
         self.model.train()
@@ -178,34 +183,33 @@ class Trainer(object):
 
             loss.backward()
             self.optim.step() # TODO: understand this in context of loss.backward
-            print("Train Epoch %d | Iteration %d | Loss %.1f | score_fr grad sum %.0f | upscore grad sum %.0f | score sum %.0f"  % 
-                (self.epoch,
-                 batch_idx,
-                 float(loss.data[0]),
-                 float(self.model.score_fr.weight.grad.sum().data[0]),
-                 float(self.model.upscore.weight.grad.sum().data[0]),
-                 float(score.sum().data[0])
-                ))
 
-            metrics = []
+            print("Train Epoch {:<5} | Iteration {:<5} | Loss {:15.0f} | score_fr grad sum {:15.0f} | upscore grad sum {:15.0f} | score sum {:15.0f}".format(
+                int(self.epoch),
+                int(batch_idx),
+                float(loss.data[0]),
+                float(self.model.score_fr.weight.grad.sum().data[0]),
+                float(self.model.upscore.weight.grad.sum().data[0]),
+                float(score.sum().data[0])))
+
+
             if self.pixel_embeddings: 
                 lbl_pred = utils.get_lbl_pred(score, self.embeddings, self.cuda) # TODO: fix lbl_pred
             else:
                 lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
             lbl_true = target.data.cpu().numpy() # TODO: why numpy()
-            for lt, lp in zip(lbl_true, lbl_pred):
-                acc, acc_cls, mean_iu, fwavacc = utils.label_accuracy_score([lt], [lp], n_class=n_class)
-                metrics.append((acc, acc_cls, mean_iu, fwavacc))
-            metrics = np.mean(metrics, axis=0)
+
+            acc, acc_cls, mean_iu, fwavacc = utils.label_accuracy_score(lbl_true, lbl_pred, n_class=n_class)
+            metrics = [acc, acc_cls, mean_iu, fwavacc]
 
             with open(osp.join(self.out, 'log.csv'), 'a') as f:
                 elapsed_time = (datetime.datetime.now(pytz.timezone('US/Eastern')) - self.timestamp_start).total_seconds()
-                log = [self.epoch, self.iteration] + [loss.data[0]] + metrics.tolist() + [''] * 5 + [elapsed_time]
+                log = [self.epoch, self.iteration] + [loss.data[0]] + metrics + [''] * 5 + [elapsed_time]
                 log = map(str, log)
                 f.write(','.join(log) + '\n')
 
     def train(self):
-        self.validate()
+        # self.validate()
         for epoch in range(self.max_epoch):
             self.epoch = epoch
             self.train_epoch()

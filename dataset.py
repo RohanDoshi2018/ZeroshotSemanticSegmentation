@@ -10,7 +10,7 @@ from torch.utils import data
 import utils
 import pickle
 
-data_dir = open('data_dir.txt', 'r').read()
+data_dir = open('data_dir.txt', 'r').read().strip()
 
 class VOCClassSegBase(data.Dataset):
     class_names = np.array([
@@ -47,7 +47,7 @@ class VOCClassSegBase(data.Dataset):
             self.init_embeddings()
 
         # VOC2011 and others are subset of VOC2012
-        dataset_dir = data_dir + '/pascal/VOC2012'
+        dataset_dir = data_dir + '/pascal/VOCdevkit/VOC2012'
         self.files = collections.defaultdict(list)
         for split in ['train', 'val']:
             imgsets_file = osp.join(dataset_dir, 'ImageSets/Segmentation/%s.txt' % split)
@@ -120,7 +120,7 @@ class VOC2011ClassSeg(VOCClassSegBase):
         if self.embed_dim:
             embeddings_dict = utils.load_obj('embeddings/label2vec_arr_' + str(embed_dim))
         imgsets_file = data_dir + '/pascal/seg11valid.txt'
-        dataset_dir = data_dir + '/pascal/VOC2012'
+        dataset_dir = data_dir + '/pascal/VOCdevkit/VOC2012'
         for did in open(imgsets_file):
             did = did.strip()
             img_file = osp.join(dataset_dir, 'JPEGImages/%s.jpg' % did)

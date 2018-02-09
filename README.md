@@ -61,18 +61,24 @@ git clone https://github.com/RohanDoshi2018/ZeroshotSemanticSegmentation.git
 cd ZeroshotSemanticSegmentation
 ```
 
-3. Create new conda environment + Install Dependencies
+3. Create new conda environment
 ```bash
-conda env create -f thesis.yml
+conda create --name thesis
 ```
 
-4. Activate your conda environment
+4. Install Dependencies
+```bash
+conda install pytorch torchvision -c pytorch
+pip install pytz pyyaml scipy fcn jupyter
+```
+
+5. Activate your conda environment
 source activate thesis
 
-5. Set your directory to store
+6. Set your directory to store
 Edit the path in data_dir.py if you want to store logs/models/dataset files in another path.
 
-6. Run code
+7. Run code
 ```
 ./download_dataset.sh;
 python train.py -c 1;

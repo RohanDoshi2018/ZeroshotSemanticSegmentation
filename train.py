@@ -32,7 +32,7 @@ configurations = {
     ),
 }
 
-data_dir = open('data_dir.txt', 'r').read()
+data_dir = open('data_dir.txt', 'r').read().strip()
 
 def get_log_dir(model_name, cfg):
     if model_name:
