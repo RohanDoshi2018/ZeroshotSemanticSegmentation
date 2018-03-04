@@ -38,12 +38,13 @@ class VOCClassSegBase(data.Dataset):
     ])
     mean_bgr = np.array([104.00698793, 116.66876762, 122.67891434])
 
-    def __init__(self, split='train', transform=False, embed_dim=None):
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False):
         self.split = split
         self._transform = transform
         self.embed_dim = embed_dim # of dimensions for the embed_dim-embeddings
+        self.one_hot_embed = one_hot_embed
 
-        if self.embed_dim:
+        if self.embed_dim or self.one_hot_embed:
             self.init_embeddings()
 
         # VOC2011 and others are subset of VOC2012
@@ -58,11 +59,15 @@ class VOCClassSegBase(data.Dataset):
                 self.files[split].append({'img': img_file, 'lbl': lbl_file,})
 
     def init_embeddings(self):
-        embeddings_dict = utils.load_obj('embeddings/label2vec_arr_' + str(self.embed_dim))
-        num_classes = embeddings_dict.shape[0] #  21 = background (class 0) + labels (class 1-20)
+        if self.one_hot_embed:
+            embed_arr = utils.load_obj('embeddings/one_hot_21_dim')
+        else:
+            embed_arr = utils.load_obj('embeddings/unit_embed_arr_' + str(self.embed_dim))
+
+        num_classes = embed_arr.shape[0] #  21 = background (class 0) + labels (class 1-20)
         self.embeddings = torch.nn.Embedding(num_classes, self.embed_dim)
         self.embeddings.weight.requires_grad = False
-        self.embeddings.weight.data.copy_(torch.from_numpy(embeddings_dict))
+        self.embeddings.weight.data.copy_(torch.from_numpy(embed_arr))
 
     def __len__(self):         
         return len(self.files[self.split])
@@ -78,11 +83,13 @@ class VOCClassSegBase(data.Dataset):
         lbl = PIL.Image.open(lbl_file)
         lbl = np.array(lbl, dtype=np.int32)
         lbl[lbl == 255] = -1
+        
         if self.embed_dim:
             # change lbl's -1 to 0 for embedding lookup because it cannot handle index -1. revert after
             mask = (lbl==-1)
             lbl[mask] = 0
             lbl_vec = self.embeddings(torch.from_numpy(lbl).long()).data
+            lbl_vec = lbl_vec.permute(2,0,1)
             lbl[mask] = -1
 
         if self._transform:
@@ -97,7 +104,7 @@ class VOCClassSegBase(data.Dataset):
         img = img[:, :, ::-1]  # RGB -> BGR
         img = img.astype(np.float64)
         img -= self.mean_bgr
-        img = img.transpose(2, 0, 1)
+        img = img.transpose(2, 0, 1) # TODO: does this work with self.pixel_embeddings
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
         return img, lbl
@@ -114,11 +121,9 @@ class VOCClassSegBase(data.Dataset):
 
 class VOC2011ClassSeg(VOCClassSegBase):
 
-    def __init__(self, split='train', transform=False, embed_dim=None):
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False):
         super(VOC2011ClassSeg, self).__init__(
-            split=split, transform=transform, embed_dim=embed_dim)
-        if self.embed_dim:
-            embeddings_dict = utils.load_obj('embeddings/label2vec_arr_' + str(embed_dim))
+            split=split, transform=transform, embed_dim=embed_dim, one_hot_embed=one_hot_embed)
         imgsets_file = data_dir + '/pascal/seg11valid.txt'
         dataset_dir = data_dir + '/pascal/VOCdevkit/VOC2012'
         for did in open(imgsets_file):
@@ -132,8 +137,8 @@ class VOC2012ClassSeg(VOCClassSegBase):
 
     url = 'http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar'  # NOQA
 
-    def __init__(self, split='train', transform=False):
-        super(VOC2012ClassSeg, self).__init__(root, split=split, transform=transform)
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False):
+        super(VOC2012ClassSeg, self).__init__(root, split=split, transform=transform, embed_dim=embed_dim, one_hot_embed=one_hot_embed)
 
 
 class SBDClassSeg(VOCClassSegBase):
@@ -141,12 +146,13 @@ class SBDClassSeg(VOCClassSegBase):
     # XXX: It must be renamed to benchmark.tar to be extracted.
     url = 'http://www.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/semantic_contours/benchmark.tgz'  # NOQA
 
-    def __init__(self, split='train', transform=False, embed_dim=None):
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False):
         self.split = split
         self._transform = transform
         self.embed_dim = embed_dim # of dimensions for the embed_dim-embeddings
+        self.one_hot_embed = one_hot_embed
 
-        if self.embed_dim:
+        if self.embed_dim or self.one_hot_embed:
             self.init_embeddings()
 
         dataset_dir = data_dir + '/pascal/benchmark_RELEASE/dataset'
@@ -176,6 +182,7 @@ class SBDClassSeg(VOCClassSegBase):
             mask = (lbl==-1)
             lbl[mask] = 0
             lbl_vec = self.embeddings(torch.from_numpy(lbl).long()).data
+            lbl_vec = lbl_vec.permute(2,0,1)
             lbl[mask] = -1
         
         if self._transform:

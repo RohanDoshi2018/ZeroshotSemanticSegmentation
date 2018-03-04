@@ -97,10 +97,11 @@ class FCN32s(nn.Module):
 
     def _initialize_weights(self):
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.weight.data.zero_()
-                if m.bias is not None:
-                    m.bias.data.zero_()
+            # commented out since it was initializing score_fr to 0
+            # if isinstance(m, nn.Conv2d): 
+            #     m.weight.data.zero_()
+            #     if m.bias is not None:
+            #         m.bias.data.zero_()
             if isinstance(m, nn.ConvTranspose2d):
                 assert m.kernel_size[0] == m.kernel_size[1]
                 initial_weight = get_upsampling_weight(
@@ -178,18 +179,16 @@ class FCN32s(nn.Module):
             l2.weight.data = l1.weight.data.view(l2.weight.size())
             l2.bias.data = l1.bias.data.view(l2.bias.size())
 
-
 def VGG16(pretrained=False):
     model = torchvision.models.vgg16(pretrained=False)
     if not pretrained:
         return model
-    data_dir = open('data_dir.txt', 'r').read()
+    data_dir = open('data_dir.txt', 'r').read().strip()
     model_path = osp.join(data_dir, 'models/vgg16_from_caffe.pth')
     model_file = _get_vgg16_pretrained_model(model_path)
     state_dict = torch.load(model_file)
     model.load_state_dict(state_dict)
     return model
-
 
 def _get_vgg16_pretrained_model(model_path):
     return fcn.data.cached_download(

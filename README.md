@@ -69,7 +69,7 @@ conda create --name thesis
 4. Install Dependencies
 ```bash
 conda install pytorch torchvision -c pytorch
-pip install pytz pyyaml scipy fcn jupyter
+pip install pytz pyyaml scipy fcn jupyter tensorboardX
 ```
 
 5. Activate your conda environment
@@ -83,3 +83,31 @@ Edit the path in data_dir.py if you want to store logs/models/dataset files in a
 ./download_dataset.sh;
 python train.py -c 1;
 ```
+
+## Zero-Shot Class Split
+
+#### SEEN (10 classes)
+
+'aeroplane',     # class 1 VEHICLES (3x)
+'bicycle',       # class 2
+'boat',          # class 4
+'bird',          # class 3 ANIMALS (4x)
+'cat',           # class 8
+'cow',           # class 10
+'dog',           # class 12
+'bottle',        # class 5 HOUSEHOLD OBJECTS (3x)
+'chair',         # class 9
+'diningtable',   # class 11
+
+#### UNSEEN (10 classes)
+
+'bus',           # class 6 VEHICLES (4x)
+'car',           # class 7
+'motorbike',     # class 14
+'train',         # class 19
+'horse',         # class 13 ANIMALS (3x)
+'person',        # class 15
+'sheep',         # class 17
+'potted plant',  # class 16 HOUSEHOLD OBJECTS (3x)
+'sofa',          # class 18
+'tv/monitor',    # class 20

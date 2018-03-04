@@ -3,33 +3,52 @@ import argparse
 import datetime
 import os
 import os.path as osp
-import shlex
-import subprocess
 import pytz
 import torch
 import yaml
 import dataset, models, trainer
 import torch.nn as nn
-import subprocess
 
 configurations = {
-    # no embeddings, softmax output
+    # fcn baseline: no embeddings, softmax output
     1: dict(
+        max_epoch=12,
         lr=1.0e-10,
         momentum=0.99,
         weight_decay=0.0005,
-        embed_dim=None,
+        embed_dim=0,
+        one_hot_embed=False,
+        train_loss_func=None, # not used
+        background_loss=True,
         zeroshot=False,
     ),
 
-    # 50D embeddings
+    # 21D one-hot embeddings
     2: dict(
-        lr=1.0e-15,
+        max_epoch=15,
+        lr=1e-6,
         momentum=0.99,
         weight_decay=.0005,
-        embed_dim=50,
+        embed_dim=21,
+        one_hot_embed=True,
+        train_loss_func="mse",
+        background_loss=False,
         zeroshot=False,
     ),
+
+    # 20D joint-embeddings
+    3: dict(
+        max_epoch=15,
+        lr=1e-15,
+        momentum=0.99,
+        weight_decay=.0005,
+        embed_dim=20,
+        one_hot_embed=False,
+        train_loss_func="mse",
+        background_loss=True,
+        zeroshot=False,
+    ),
+
 }
 
 data_dir = open('data_dir.txt', 'r').read().strip()
@@ -78,22 +97,42 @@ def get_parameters(model, bias=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', type=str, default=None, help='Name of checkpoint folder')
+    parser.add_argument('-n', '--name', type=str, default=None, help='name of checkpoint folder')
     parser.add_argument('-g', '--gpu', type=int, default=0, required=False)
-    parser.add_argument('-c', '--config', type=int, default=1, choices=configurations.keys())
-    parser.add_argument('--resume', help='Checkpoint path')
-    parser.add_argument("--max_epoch", default=15, type=int, help="maximum number of training epochs")
-    parser.add_argument("--dataset", type=str, default="pascal", help="pascal") # TODO: add other datasets here eventually
-    args = parser.parse_args()
+    parser.add_argument('-r', '--resume', help='checkpoint path')
 
+    parser.add_argument('-c', '--config', type=int, default=1, choices=configurations.keys())
+    parser.add_argument('-me', '--max_epoch', type=int, help='maximum number of training epochs')
+    parser.add_argument('-lr', '--learning_rate', type=float, help='learning rate')
+    parser.add_argument('-e', '--embed_dim', type=int, help='dimensionality of joint embeddings space')
+    parser.add_argument('-lf', '--train_loss_func', type=str, choices=['neg_cos','mse', None], help='training loss function if using embeddings')
+    parser.add_argument('-bkl', '--background_loss', type=bool, help='compute loss on background pixels?')
+    # parser.add_argument("-d", "--dataset", type=str, default="pascal", help="pascal") # TODO: add other datasets here eventually
+
+    args = parser.parse_args()
+    name = args.name
     gpu = args.gpu
-    max_epoch = args.max_epoch
+    resume = args.resume
     cfg = configurations[args.config]
-    embed_dim = cfg['embed_dim']
+
+    # customize the config
+    if args.max_epoch:
+        cfg['max_epoch'] = args.max_epoch
+    if args.embed_dim:
+        cfg['embed_dim'] = args.embed_dim
+    if args.learning_rate:
+        cfg['lr'] = args.learning_rate
+    if args.train_loss_func:
+        cfg['train_loss_func'] = args.train_loss_func
+    if args.background_loss:
+        cfg['background_loss'] = args.background_loss
+
+    if cfg['one_hot_embed'] and cfg['embed_dim'] != 21:
+        raise Exception('joint-embedding space must be size of one-hot embedding space')
+
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
-    out = get_log_dir(args.name, cfg)
-    resume = args.resume
+    out = get_log_dir(name, cfg)
 
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
     cuda = torch.cuda.is_available()
@@ -105,15 +144,15 @@ def main():
     # 1. dataset
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
-        dataset.SBDClassSeg(split='train', transform=True, embed_dim=embed_dim),
+        dataset.SBDClassSeg(split='train', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed']),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
-        dataset.VOC2011ClassSeg(split='seg11valid', transform=True, embed_dim=embed_dim),
+        dataset.VOC2011ClassSeg(split='seg11valid', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed']),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
-    if embed_dim:
-        model = models.FCN32s(n_class=embed_dim)    
+    if cfg['embed_dim']:
+        model = models.FCN32s(n_class=cfg['embed_dim'])
     else:
         model = models.FCN32s(n_class=21)
     start_epoch = 0
@@ -149,8 +188,10 @@ def main():
         train_loader=train_loader,
         val_loader=val_loader,
         out=out,
-        max_epoch=max_epoch,
-		pixel_embeddings=embed_dim
+        max_epoch=cfg['max_epoch'],
+		pixel_embeddings=cfg['embed_dim'],
+        training_loss_func=cfg['train_loss_func'],
+        background_loss=cfg['background_loss'],
     )
     fcn_trainer.epoch = start_epoch
     fcn_trainer.iteration = start_iteration
