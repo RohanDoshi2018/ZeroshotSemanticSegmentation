@@ -63,7 +63,7 @@ cd ZeroshotSemanticSegmentation
 
 3. Create new conda environment
 ```bash
-conda create --name thesis
+conda create --name thesis_env
 ```
 
 4. Install Dependencies

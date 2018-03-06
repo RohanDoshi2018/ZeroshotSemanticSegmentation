@@ -25,14 +25,14 @@ configurations = {
 
     # 21D one-hot embeddings
     2: dict(
-        max_epoch=15,
+        max_epoch=50,
         lr=1e-6,
         momentum=0.99,
         weight_decay=.0005,
         embed_dim=21,
         one_hot_embed=True,
         train_loss_func="mse",
-        background_loss=False,
+        background_loss=True,
         zeroshot=False,
     ),
 
@@ -101,7 +101,7 @@ def main():
     parser.add_argument('-g', '--gpu', type=int, default=0, required=False)
     parser.add_argument('-r', '--resume', help='checkpoint path')
 
-    parser.add_argument('-c', '--config', type=int, default=1, choices=configurations.keys())
+    parser.add_argument('-c', '--config', type=int, default=2, choices=configurations.keys())
     parser.add_argument('-me', '--max_epoch', type=int, help='maximum number of training epochs')
     parser.add_argument('-lr', '--learning_rate', type=float, help='learning rate')
     parser.add_argument('-e', '--embed_dim', type=int, help='dimensionality of joint embeddings space')
