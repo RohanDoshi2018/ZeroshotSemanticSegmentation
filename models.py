@@ -179,11 +179,10 @@ class FCN32s(nn.Module):
             l2.weight.data = l1.weight.data.view(l2.weight.size())
             l2.bias.data = l1.bias.data.view(l2.bias.size())
 
-def VGG16(pretrained=False):
+def VGG16(pretrained=False, data_dir='data'):
     model = torchvision.models.vgg16(pretrained=False)
     if not pretrained:
         return model
-    data_dir = open('data_dir.txt', 'r').read().strip()
     model_path = osp.join(data_dir, 'models/vgg16_from_caffe.pth')
     model_file = _get_vgg16_pretrained_model(model_path)
     state_dict = torch.load(model_file)

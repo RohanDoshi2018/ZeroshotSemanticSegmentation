@@ -8,7 +8,7 @@ import skimage.io
 import torch
 from torch.autograd import Variable
 import tqdm
-import dataset, models, utils 
+import pascal_dataset, models, utils 
 
 def main():
     parser = argparse.ArgumentParser()
@@ -18,13 +18,14 @@ def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
     cuda = torch.cuda.is_available()
 
-    root = '/opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/logs/'
-    model_file = root + '_MAX_EPOCH_15_LR_1e-06_MOMENTUM_0.99_WEIGHT_DECAY_0.0005_EMBED_DIM_21_ONE_HOT_EMBED_True_TRAIN_LOSS_FUNC_mse_BACKGROUND_LOSS_False_ZEROSHOT_False_TIME-20180227-220242/best'
-    # model_file = root + '_MAX_EPOCH_15_LR_1e-06_MOMENTUM_0.99_WEIGHT_DECAY_0.0005_EMBED_DIM_21_ONE_HOT_EMBED_True_TRAIN_LOSS_FUNC_mse_BACKGROUND_LOSS_True_ZEROSHOT_False_TIME-20180228-082313/best'
-    
+    data_dir = '/opt/visualai/rkdoshi/ZeroshotSemanticSegmentation'
+    model_name = '/baseline_sgd_CFG_1_MAX_EPOCH_50_LR_1e-10_MOMENTUM_0.99_WEIGHT_DECAY_0.0005_EMBED_DIM_0_ONE_HOT_EMBED_False_TRAIN_LOSS_FUNC_None_BACKGROUND_LOSS_True_ZEROSHOT_False_DATASET_pascal_OPTIMIZER_sgd_TIME-20180306-225909'
+    suffix = '/best'
+    model_file = data_dir + '/logs' + model_name + suffix
+
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
     val_loader = torch.utils.data.DataLoader(
-        dataset.VOC2011ClassSeg(split='seg11valid', transform=True, embed_dim=21, one_hot_embed=True),
+        pascal_dataset.VOC2011ClassSeg(split='seg11valid', transform=True, embed_dim=21, one_hot_embed=True, data_dir=data_dir),
         batch_size=1, shuffle=False, **kwargs)
 
     n_class = len(val_loader.dataset.class_names)
@@ -44,9 +45,7 @@ def main():
     embed_arr = utils.load_obj('embeddings/one_hot_21_dim')
     embeddings = Variable(torch.from_numpy(embed_arr).cuda().float(), requires_grad=False)
 
-
-    visualizations = []
-    label_trues, label_preds = [], []
+    label_nni_preds, label_argmax_preds, label_trues = [], [], []
     for batch_idx, (data, target) in enumerate(val_loader):
 
         target, target_embed = target
@@ -56,34 +55,30 @@ def main():
         target_embed = Variable(target_embed.cuda())
         score = model(data)
 
-        imgs = data.data.cpu()
-        
+        lbl_pred_nni = utils.infer_lbl(score, embeddings, cuda)[0]
+        lbl_pred_argmax = score.data.max(1)[1].cpu().numpy()[:, :, :][0]
+        lbl_true = target.data.cpu().numpy()[0]
 
+        label_nni_preds.append(lbl_pred_nni)
+        label_argmax_preds.append(lbl_pred_argmax)
+        label_trues.append(lbl_true)
 
-        # lbl_pred = utils.get_lbl_pred(score, embeddings, cuda)
-        lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
+    metrics_nni = np.array(utils.label_accuracy_score(label_trues, label_nni_preds, n_class=n_class)) * 100
+    metrics_argmax = np.array(utils.label_accuracy_score(label_trues, label_argmax_preds, n_class=n_class)) * 100
 
-        lbl_true = target.data.cpu()
-        for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
-            img, lt = val_loader.dataset.untransform(img, lt)
-            label_trues.append(lt)
-            label_preds.append(lp)
-            if len(visualizations) < 9:
-                viz = fcn.utils.visualize_segmentation(
-                    lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class,
-                    label_names=val_loader.dataset.class_names)
-                visualizations.append(viz)
-    metrics = utils.label_accuracy_score(label_trues, label_preds, n_class=n_class)
-    metrics = np.array(metrics)
-    metrics *= 100
     print('''\
+Nearest Neighboring Inference
 Accuracy: {0}
 Accuracy Class: {1}
 Mean IU: {2}
-FWAV Accuracy: {3}'''.format(*metrics))
+FWAV Accuracy: {3}'''.format(*metrics_nni))
 
-    viz = fcn.utils.get_tile_image(visualizations)
-    skimage.io.imsave('/opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/logs/viz_evaluate.png', viz)
+    print('''\
+Argmax Inference
+Accuracy: {0}
+Accuracy Class: {1}
+Mean IU: {2}
+FWAV Accuracy: {3}'''.format(*metrics_argmax))
 
 if __name__ == '__main__':
     main()

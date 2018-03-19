@@ -4,6 +4,7 @@ import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
 from distutils.version import LooseVersion
+import os
 
 def load_obj(name):
     with open(name + '.pkl', 'rb') as f:
@@ -83,7 +84,7 @@ def mse_loss(score, target, target_embed, background_loss=False, size_average=Fa
 
     return loss
 
-def neg_cosine_loss(score, target, target_embed, background_loss=False, size_average=False):
+def cosine_loss(score, target, target_embed, background_loss=False, size_average=False):
     """Negative Cosine Similarity Loss between two (n,c,h,w) volumes (score and target).
     ARGS
       score: (n, c, h, w)
@@ -96,7 +97,12 @@ def neg_cosine_loss(score, target, target_embed, background_loss=False, size_ave
 
     n, c, h, w = score.size()
 
-    # TODO: normalize score to same range as target for each pixel 
+    # normalize score and target
+    score_norm = torch.norm(score, p=2, dim=1) 
+    score = score / score_norm
+
+    target_embed_norm = torch.norm(target_embed, p=2, dim=1)  
+    target_embed = target_embed/ target_embed_norm
 
     # apply mask to score and target
     if background_loss:
@@ -108,7 +114,7 @@ def neg_cosine_loss(score, target, target_embed, background_loss=False, size_ave
     score_masked = score[mask_tensor]
     target_embed_masked = target_embed[mask_tensor]
 
-    loss = -1 * torch.sum(score_masked * target_embed_masked)
+    loss = mask_size - torch.sum(score_masked * target_embed_masked)
     if size_average:
       loss /= mask_size # divide loss by number of non-masked pixels
     return loss
@@ -140,17 +146,26 @@ def label_accuracy_score(label_trues, label_preds, n_class):
     fwavacc = (freq[freq > 0] * iu[freq > 0]).sum()
     return acc, acc_cls, mean_iu, fwavacc
 
-# get nearest label prediction for pixel embeddings of size (n,c, h, w) 
+# infer lbl for a joint-embedding using nearest neighboring embedding (NNE) inference
 # score: torch (n,c,h,w)
 # embed_arr: torch (c, embed_dim) e.g. (21,50)
-def get_lbl_pred(score, embed_arr, cuda=False):
+def infer_lbl(score, embed_arr, cuda=False):
   n, c, h, w = score.size()
   num_class, num_dim = embed_arr.shape
 
   score = score.transpose(1,2).transpose(2,3).contiguous().view(h*w,c)
   embeddings = embed_arr.transpose(1,0)
+
   similarity_scores = torch.mm(score, embeddings)
-  max_val, indices = similarity_scores.max(1) # min along correct dimension?
+
+  # normalize by norm of score and embeddings
+  score_norm = torch.norm(score, p=2, dim=1).view(h*w,1).repeat(1,num_class)
+  embeddings_norm = torch.norm(embeddings, p=2, dim=0).view(1,num_class).repeat(h*w,1)
+
+  similarity_scores = similarity_scores / score_norm
+  similarity_scores = similarity_scores / embeddings_norm
+
+  max_val, indices = similarity_scores.max(1) # max along correct dimension
 
   if cuda:
     return indices.view(1,h,w).data.cpu().numpy() # TODO: why dim 1

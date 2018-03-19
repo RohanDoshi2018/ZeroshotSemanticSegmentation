@@ -69,19 +69,20 @@ conda create --name thesis_env
 4. Install Dependencies
 ```bash
 conda install pytorch torchvision -c pytorch
-pip install pytz pyyaml scipy fcn jupyter tensorboardX
+pip install pytz pyyaml scipy fcn jupyter tensorflow tensorboardX
 ```
 
 5. Activate your conda environment
 source activate thesis
 
-6. Set your directory to store
-Edit the path in data_dir.py if you want to store logs/models/dataset files in another path.
-
-7. Run code
+6. Run code
 ```
-./download_dataset.sh;
-python train.py -c 1;
+python train.py -c 3 --data_dir data;
+```
+
+7. [Optional] Run Tensorboard Server. Use Ngrok tunnel to access server remotely.
+```
+tensorboard --logdir /opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/tb
 ```
 
 ## Zero-Shot Class Split

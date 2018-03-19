@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import collections
+import os
 import os.path as osp
 import numpy as np
 import PIL.Image
@@ -9,8 +10,9 @@ import torch
 from torch.utils import data
 import utils
 import pickle
-
-data_dir = open('data_dir.txt', 'r').read().strip()
+import shutil
+import urllib.request
+import tarfile
 
 class VOCClassSegBase(data.Dataset):
     class_names = np.array([
@@ -38,17 +40,18 @@ class VOCClassSegBase(data.Dataset):
     ])
     mean_bgr = np.array([104.00698793, 116.66876762, 122.67891434])
 
-    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False):
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False, data_dir='data'):
         self.split = split
         self._transform = transform
         self.embed_dim = embed_dim # of dimensions for the embed_dim-embeddings
         self.one_hot_embed = one_hot_embed
+        self.data_dir = data_dir
 
         if self.embed_dim or self.one_hot_embed:
             self.init_embeddings()
 
         # VOC2011 and others are subset of VOC2012
-        dataset_dir = data_dir + '/pascal/VOCdevkit/VOC2012'
+        dataset_dir = self.data_dir + '/pascal/VOCdevkit/VOC2012'
         self.files = collections.defaultdict(list)
         for split in ['train', 'val']:
             imgsets_file = osp.join(dataset_dir, 'ImageSets/Segmentation/%s.txt' % split)
@@ -62,14 +65,14 @@ class VOCClassSegBase(data.Dataset):
         if self.one_hot_embed:
             embed_arr = utils.load_obj('embeddings/one_hot_21_dim')
         else:
-            embed_arr = utils.load_obj('embeddings/unit_embed_arr_' + str(self.embed_dim))
+            embed_arr = utils.load_obj('embeddings/norm_embed_arr_' + str(self.embed_dim))
 
         num_classes = embed_arr.shape[0] #  21 = background (class 0) + labels (class 1-20)
         self.embeddings = torch.nn.Embedding(num_classes, self.embed_dim)
         self.embeddings.weight.requires_grad = False
         self.embeddings.weight.data.copy_(torch.from_numpy(embed_arr))
 
-    def __len__(self):         
+    def __len__(self):     
         return len(self.files[self.split])
 
     def __getitem__(self, index):
@@ -121,11 +124,11 @@ class VOCClassSegBase(data.Dataset):
 
 class VOC2011ClassSeg(VOCClassSegBase):
 
-    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False):
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False, data_dir='data'):
         super(VOC2011ClassSeg, self).__init__(
-            split=split, transform=transform, embed_dim=embed_dim, one_hot_embed=one_hot_embed)
-        imgsets_file = data_dir + '/pascal/seg11valid.txt'
-        dataset_dir = data_dir + '/pascal/VOCdevkit/VOC2012'
+            split=split, transform=transform, embed_dim=embed_dim, one_hot_embed=one_hot_embed, data_dir=data_dir)
+        imgsets_file = self.data_dir + '/pascal/seg11valid.txt'
+        dataset_dir = self.data_dir + '/pascal/VOCdevkit/VOC2012'
         for did in open(imgsets_file):
             did = did.strip()
             img_file = osp.join(dataset_dir, 'JPEGImages/%s.jpg' % did)
@@ -146,16 +149,18 @@ class SBDClassSeg(VOCClassSegBase):
     # XXX: It must be renamed to benchmark.tar to be extracted.
     url = 'http://www.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/semantic_contours/benchmark.tgz'  # NOQA
 
-    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False):
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False, data_dir='data', unseen=[]):
         self.split = split
         self._transform = transform
         self.embed_dim = embed_dim # of dimensions for the embed_dim-embeddings
         self.one_hot_embed = one_hot_embed
+        self.data_dir = data_dir
+        self.unseen = unseen
 
         if self.embed_dim or self.one_hot_embed:
             self.init_embeddings()
 
-        dataset_dir = data_dir + '/pascal/benchmark_RELEASE/dataset'
+        dataset_dir = self.data_dir + '/pascal/benchmark_RELEASE/dataset'
         self.files = collections.defaultdict(list)
         for split in ['train', 'val']:
             imgsets_file = osp.join(dataset_dir, '%s.txt' % split)
@@ -177,6 +182,10 @@ class SBDClassSeg(VOCClassSegBase):
         lbl = mat['GTcls'][0]['Segmentation'][0].astype(np.int32)   
         lbl[lbl == 255] = -1
 
+        # mask zero-shot unseen classes
+        for i in self.unseen:
+            lbl[lbl==i] == -1
+
         if self.embed_dim:
             # change lbl's -1 to 0 for embedding lookup because it cannot handle index -1. revert after
             mask = (lbl==-1)
@@ -192,3 +201,33 @@ class SBDClassSeg(VOCClassSegBase):
             return img, (lbl, lbl_vec)
         else:
             return img, lbl
+
+def download(data_dir):
+    if not osp.exists(data_dir+'/pascal'):
+        os.makedirs(data_dir+'/pascal', exist_ok=True)
+
+    if not osp.exists(data_dir + '/pascal/README.md') or not osp.exists(data_dir + '/pascal/seg11valid.txt'):
+        shutil.copy2('pascal/README.md', data_dir + '/pascal/README.md')
+        shutil.copy2('pascal/seg11valid.txt', data_dir + '/pascal/seg11valid.txt')
+    
+    if not osp.exists(data_dir + '/pascal/benchmark_RELEASE'):
+        os.chdir(data_dir + '/pascal')
+        URL = 'http://www.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/semantic_contours/benchmark.tgz'
+        urllib.request.urlretrieve(URL, 'benchmark.tar')
+        untar('benchmark.tar') # outputs benchmark_RELEASE in data_dir
+        os.remove('benchmark.tar')
+
+    if not osp.exists(data_dir + '/pascal/VOCdevkit/VOC2012'):
+        os.chdir(data_dir + '/pascal')
+        URL = 'http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar'
+        urllib.request.urlretrieve(URL, 'VOCtrainval_11-May-2012.tar')
+        untar('VOCtrainval_11-May-2012.tar') # outputs VOCdevkit in data_dir
+        os.remove('VOCtrainval_11-May-2012.tar')
+
+    # reset current working directory
+    os.chdir(os.path.dirname(__file__))
+
+def untar(fname):
+    tar = tarfile.open(fname)
+    tar.extractall()
+    tar.close()
