@@ -12,7 +12,10 @@ import torch.nn as nn
 from tensorboardX import SummaryWriter
 
 configurations = {
-    # fcn baseline: no embeddings, softmax output
+
+    ## PASCAL
+
+    # fcn baseline: no embeddings, softmax output (mse optimizer)
     1: dict(
         max_epoch=50,
         lr=1e-10,
@@ -20,14 +23,14 @@ configurations = {
         weight_decay=0.0005,
         embed_dim=0,
         one_hot_embed=False,
-        train_loss_func=None, # not used
-        background_loss=True,
-        unseen=False,
+        loss_func=None, # not used
+        bk_loss=True,
+        unseen=None,
         dataset='pascal',
         optimizer='sgd',
     ),
 
-    # baseline with Adam Optimizer, 
+    # fcn baseline, but with adam optimizer; 1 vs 2 conclusion: use adam optimizer 
     2: dict(
         max_epoch=50,
         lr=1e-5,
@@ -35,15 +38,15 @@ configurations = {
         weight_decay=0,
         embed_dim=0,
         one_hot_embed=False,
-        train_loss_func=None,
-        background_loss=True,
-        unseen=False,
+        loss_func=None,
+        bk_loss=True,
+        unseen=None,
         dataset='pascal',
         optimizer='adam',
     ),
 
 
-    # 21D one-hot embeddings, with Adam Optimizer
+    # 21D one-hot embeddings, mse loss
     3: dict(
         max_epoch=50,
         lr=1e-5,
@@ -51,14 +54,14 @@ configurations = {
         weight_decay=0,
         embed_dim=21,
         one_hot_embed=True,
-        train_loss_func='mse',
-        background_loss=True,
-        unseen=False,
+        loss_func='mse',
+        bk_loss=True,
+        unseen=None,
         dataset='pascal',
         optimizer='adam',
     ),
 
-    # 21D one-hot, cosine_loss, adam
+    # 21D one-hot, cosine loss; 3 vs 4 conclusion: use cosine loss
     4: dict(
         max_epoch=50,
         lr=1e-5,
@@ -66,38 +69,86 @@ configurations = {
         weight_decay=0,
         embed_dim=21,
         one_hot_embed=True,
-        train_loss_func='cos',
-        background_loss=True,
-        unseen=False,
+        loss_func='cos',
+        bk_loss=True,
+        unseen=None,
         dataset='pascal',
         optimizer='adam',
     ),
 
-    # 20D joint-embeddings, mse
+    # 20D; mse vs cos args conclusion: use cosine loss
     5: dict(
+        max_epoch=50, # 8498 training images
+        lr=5e-5,
+        momentum=None,
+        weight_decay=None,
+        embed_dim=20,
+        one_hot_embed=False,
+        loss_func='cos',
+        bk_loss=True,
+        unseen=None,
+        dataset='pascal',
+        optimizer='adam',
+    ),
+
+    # 20D zeroshot (unseen: 10 classes)
+    6: dict(
+        max_epoch=130, # 3311 seen and 5187 unseen training images
+        lr=1e-5,
+        momentum=None,
+        weight_decay=None,
+        embed_dim=20,
+        one_hot_embed=False,
+        loss_func='cos',
+        bk_loss=True,
+        unseen=[6, 7, 13, 14, 15, 16, 17, 18, 19, 20],
+        dataset='pascal',
+        optimizer='adam',
+    ),
+
+    ## CONTEXT
+
+    # 20D context
+    7: dict(
         max_epoch=50,
         lr=5e-5,
         momentum=None,
         weight_decay=None,
         embed_dim=20,
         one_hot_embed=False,
-        train_loss_func='mse',
-        background_loss=True,
-        unseen=False,
-        dataset='pascal',
+        loss_func='cos',
+        bk_loss=True,
+        unseen=None,
+        dataset='context',
         optimizer='adam',
     ),
 
-    # 20D zeroshot, mse, adam (unseen: 10 classes)
-    6: dict(
-        max_epoch=50,
+    # 20D context zeroshot (unseen: 16 classes)
+    8: dict(
+        max_epoch=100,
         lr=1e-5,
         momentum=None,
         weight_decay=None,
         embed_dim=20,
         one_hot_embed=False,
-        train_loss_func='mse',
-        background_loss=True,
+        loss_func='cos',
+        bk_loss=True,
+        unseen=[2,4,6,8,10],
+        # unseen=[2+2*i for i in range(16)], # 2, 4, ..., 32
+        dataset='context',
+        optimizer='adam',
+    ),
+
+    # 20D zeroshot with forced unseen (unseen: 10 classes)
+    9: dict(
+        max_epoch=130,
+        lr=1e-5,
+        momentum=None,
+        weight_decay=None,
+        embed_dim=20,
+        one_hot_embed=False,
+        loss_func='cos',
+        bk_loss=True,
         unseen=[6, 7, 13, 14, 15, 16, 17, 18, 19, 20],
         dataset='pascal',
         optimizer='adam',
@@ -112,7 +163,13 @@ def get_log_dir(model_name, cfg, cfg_num, data_dir):
         name = ''
     name += "_CFG_%d" % int(cfg_num)
     for k, v in cfg.items():
-        name += '_%s_%s' % (k.upper(), str(v))
+        if k == 'unseen':
+            if cfg['unseen']:
+                name += '_%s_%s' % (k.upper(), str(True))
+            else:
+                name += '_%s_%s' % (k.upper(), str(False))
+        else:
+            name += '_%s_%s' % (k.upper(), str(v))
 
     now = datetime.datetime.now(pytz.timezone('US/Eastern'))
     name += '_TIME-%s' % now.strftime('%Y%m%d-%H%M%S')
@@ -155,14 +212,14 @@ def get_parameters(model, bias=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--name', type=str, default=None, help='name of checkpoint folder')
-    parser.add_argument('-g', '--gpu', type=int, default=0)
+    parser.add_argument('-g', '--gpu', type=int, default=0, help='gpu number; -1 for cpu')
     parser.add_argument('-r', '--resume', help='checkpoint path')
     parser.add_argument('-c', '--config', type=int, default=3, choices=configurations.keys()) # reset to default 1 eventually
     parser.add_argument('-me', '--max_epoch', type=int, help='maximum number of training epochs')
     parser.add_argument('-lr', '--learning_rate', type=float, help='learning rate')
     parser.add_argument('-e', '--embed_dim', type=int, help='dimensionality of joint embeddings space')
-    parser.add_argument('-loss', '--train_loss_func', type=str, choices=['cos','mse', None], help='training loss function if using embeddings')
-    parser.add_argument('-bkl', '--background_loss', type=bool, help='compute loss on background pixels?')
+    parser.add_argument('-loss', '--loss_func', type=str, choices=['cos','mse', None], help='training loss function if using embeddings')
+    parser.add_argument('-bkl', '--bk_loss', type=bool, help='compute loss on background pixels?')
     parser.add_argument("-d", "--dataset", type=str, choices=['pascal', 'context'], help='dataset name')
     parser.add_argument("-dir", "--data_dir", type=str, default='/opt/visualai/rkdoshi/ZeroshotSemanticSegmentation', help=' path where to store dataset, logs, and models')
     parser.add_argument("-tb", "--tb_dir", type=str, default='/opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/tb', help='path to tensorboard directory')
@@ -185,10 +242,10 @@ def main():
         cfg['embed_dim'] = args.embed_dim
     if args.learning_rate:
         cfg['lr'] = args.learning_rate
-    if args.train_loss_func:
-        cfg['train_loss_func'] = args.train_loss_func
-    if args.background_loss:
-        cfg['background_loss'] = args.background_loss
+    if args.loss_func:
+        cfg['loss_func'] = args.loss_func
+    if args.bk_loss:
+        cfg['bk_loss'] = args.bk_loss
     if args.dataset:
         cfg['dataset'] = args.dataset
     if args.optim:
@@ -212,22 +269,39 @@ def main():
     # set up CUDA
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
     cuda = torch.cuda.is_available()
+    if cuda == -1:
+        cuda=False
     torch.manual_seed(1337)
     if cuda:
         torch.cuda.manual_seed(1337)
 
     # 1. dataset
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
+    label_names = None
     if cfg['dataset'] == "pascal":
 
         pascal_dataset.download(data_dir)
 
-        train_loader = torch.utils.data.DataLoader(
-            pascal_dataset.SBDClassSeg(split='train', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir, unseen=cfg['unseen']),
-            batch_size=1, shuffle=True, **kwargs)
-        val_loader = torch.utils.data.DataLoader(
-            pascal_dataset.VOC2011ClassSeg(split='seg11valid', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir),
-            batch_size=1, shuffle=False, **kwargs)
+        train_dataset = pascal_dataset.SBDClassSeg(split='train', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, **kwargs)
+
+        val_dataset = pascal_dataset.VOC2011ClassSeg(split='seg11valid', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, **kwargs)
+
+        label_names = train_dataset.class_names
+
+    elif cfg['dataset'] == "context":
+
+        context_dataset.download(data_dir)
+
+        train_dataset = context_dataset.VOCContext(split='train', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, **kwargs)
+
+        val_dataset = context_dataset.VOCContext(split='val', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, **kwargs)  
+
+        label_names = train_dataset.class_names 
+
     else:
 
         raise Exception("Datasets apart from Pascal not implemented")
@@ -273,6 +347,7 @@ def main():
         optim.load_state_dict(checkpoint['optim_state_dict'])
 
     # 4. training
+
     fcn_trainer = trainer.Trainer(
         cuda=cuda,
         model=model,
@@ -280,11 +355,14 @@ def main():
         train_loader=train_loader,
         val_loader=val_loader,
         out=out,
+        dataset=cfg['dataset'],
         max_epoch=cfg['max_epoch'],
 		pixel_embeddings=cfg['embed_dim'],
-        training_loss_func=cfg['train_loss_func'],
-        background_loss=cfg['background_loss'],
+        loss_func=cfg['loss_func'],
+        background_loss=cfg['bk_loss'],
         tb_writer=tb_writer,
+        unseen=cfg['unseen'],
+        label_names=label_names,
     )
     fcn_trainer.epoch = start_epoch
     fcn_trainer.iteration = start_iteration

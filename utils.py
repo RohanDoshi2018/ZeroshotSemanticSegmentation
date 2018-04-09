@@ -119,24 +119,25 @@ def cosine_loss(score, target, target_embed, background_loss=False, size_average
       loss /= mask_size # divide loss by number of non-masked pixels
     return loss
 
-def _fast_hist(label_true, label_pred, n_class):
+def _fast_hist(label_true, label_pred, n_class, target='all', unseen=None):
+
     mask = (label_true >= 0) & (label_true < n_class)
+
+    if target == 'unseen':
+            mask_unseen = np.in1d(label_true.ravel(), unseen).reshape(label_true.shape)
+            mask = mask & mask_unseen 
+            
+    elif target == 'seen':
+        seen = [x for x in range(n_class) if x not in unseen]
+        mask_seen = np.in1d(label_true.ravel(), seen).reshape(label_true.shape)
+        mask = mask & mask_seen
+            
     hist = np.bincount(
         n_class * label_true[mask].astype(int) +
         label_pred[mask], minlength=n_class ** 2).reshape(n_class, n_class)
     return hist
 
-def label_accuracy_score(label_trues, label_preds, n_class):
-    """Returns accuracy score evaluation result.
-
-      - overall accuracy
-      - mean accuracy
-      - mean IU
-      - fwavacc
-    """
-    hist = np.zeros((n_class, n_class))
-    for lt, lp in zip(label_trues, label_preds):
-        hist += _fast_hist(lt.flatten(), lp.flatten(), n_class)
+def _hist_to_metrics(hist):
     acc = np.diag(hist).sum() / hist.sum()
     acc_cls = np.diag(hist) / hist.sum(axis=1)
     acc_cls = np.nanmean(acc_cls)
@@ -145,6 +146,31 @@ def label_accuracy_score(label_trues, label_preds, n_class):
     freq = hist.sum(axis=1) / hist.sum()
     fwavacc = (freq[freq > 0] * iu[freq > 0]).sum()
     return acc, acc_cls, mean_iu, fwavacc
+
+def label_accuracy_score(label_trues, label_preds, n_class, unseen=None):
+    """Returns accuracy score evaluation result.
+      - overall accuracy
+      - mean accuracy
+      - mean IU
+      - fwavacc
+    """
+
+    hist = np.zeros((n_class, n_class))
+    if unseen:
+        unseen_hist, seen_hist = np.zeros((n_class, n_class)), np.zeros((n_class, n_class))
+
+    for lt, lp in zip(label_trues, label_preds):
+        hist += _fast_hist(lt.flatten(), lp.flatten(), n_class, target='all')
+        if unseen:
+            seen_hist += _fast_hist(lt.flatten(), lp.flatten(), n_class, target='seen', unseen=unseen)
+            unseen_hist += _fast_hist(lt.flatten(), lp.flatten(), n_class, target='unseen', unseen=unseen)
+    
+    metrics = _hist_to_metrics(hist)
+    if unseen:
+        seen_metrics, unseen_metrics = _hist_to_metrics(seen_hist), _hist_to_metrics(unseen_hist)      
+        metrics = metrics, seen_metrics, unseen_metrics
+
+    return metrics
 
 # infer lbl for a joint-embedding using nearest neighboring embedding (NNE) inference
 # score: torch (n,c,h,w)
@@ -172,6 +198,13 @@ def infer_lbl(score, embed_arr, cuda=False):
   else:
     return indices.view(1,h,w).data.numpy() # TODO: why dim 1
 
-# useful for visualizing heatmaps, masks etc.
-def tensor_to_img(tensor):
-  return True
+# for seen pixels, inference along all classes. for unseen pixels, inference only among unseen classes
+def infer_lbl_forced_unseen(score, target, all_embed_arr, unseen_embed_arr, unseen, cuda=False):
+  unseen_mask = np.in1d(target.ravel(), unseen).reshape(target.shape)
+
+  all_infer_lbl =  infer_lbl(score, all_embed_arr, cuda=cuda) # inferences among all classes
+  unseen_infer_lbl = infer_lbl(score, unseen_embed_arr, cuda=cuda) # inferences among just the unseen classes
+
+  forced_unseen_lbl = all_infer_lbl
+  forced_unseen_lbl[unseen_mask] = unseen_infer_lbl[unseen_mask]
+  return forced_unseen_lbl

@@ -16,8 +16,8 @@ import utils
 
 class Trainer(object):
 
-    def __init__(self, cuda, model, optimizer, train_loader, val_loader, out, max_epoch, tb_writer,
-                    size_average=False, pixel_embeddings=None, training_loss_func=None, background_loss=True):
+    def __init__(self, cuda, model, optimizer, train_loader, val_loader, out, dataset, max_epoch, tb_writer, size_average=False, 
+                    pixel_embeddings=None, loss_func=None, background_loss=True, unseen=None, label_names=None):
         self.cuda = cuda
         self.model = model
         self.optim = optimizer
@@ -27,9 +27,12 @@ class Trainer(object):
         self.out = out
         self.timestamp_start = datetime.datetime.now(pytz.timezone('US/Eastern'))
         self.size_average = size_average
-        self.training_loss_func = training_loss_func
+        self.loss_func = loss_func
         self.background_loss = background_loss
         self.tb_writer = tb_writer
+        self.unseen = unseen
+        self.label_names = label_names
+        self.dataset = dataset
 
         self.epoch = 0
         self.iteration = 0
@@ -37,10 +40,15 @@ class Trainer(object):
         self.best_mean_iu = 0
         self.n_class = len(self.train_loader.dataset.class_names)
 
+        self.train_unseen_img = 0
+        self.train_ignored_img = 0
+
+        self.val_ignored_img = 0
+
         # set up embeddings
         if self.pixel_embeddings:
-            # pascal embeddings; eeach embedding has norm between 0 and 1
-            self.embeddings = utils.load_obj('embeddings/norm_embed_arr_' + str(pixel_embeddings))
+            # each embedding has norm between 0 and 1
+            self.embeddings = utils.load_obj('datasets/%s/embeddings/norm_embed_arr_%s' % (dataset, str(pixel_embeddings)) )
             if cuda:
                 self.embeddings = Variable(torch.from_numpy(self.embeddings).cuda().float(), requires_grad=False)
             else:
@@ -52,7 +60,13 @@ class Trainer(object):
             os.makedirs(self.out)
 
         self.train_log_headers = ['epoch', 'iteration', 'train/loss', 'train/pxl_acc', 'train/class_acc', 'train/mean_iu', 'train/fwavacc', 'elapsed_time']
-        self.val_log_headers = ['epoch', 'iteration', 'valid/loss', 'valid/pxl_acc', 'valid/class_acc', 'valid/mean_iu', 'valid/fwavacc', 'elapsed_time']
+
+        if self.unseen:
+            self.val_log_headers = ['epoch', 'iteration', 'val/loss', 'val/pxl_acc', 'val/class_acc', 'val/mean_iu', 'val/fwavacc', 
+                                    'val/seen/pxl_acc', 'val/seen/class_acc', 'val/seen/mean_iu', 'val/seen/fwavacc',         
+                                    'val/unseen/pxl_acc', 'val/unseen/class_acc', 'val/unseen/mean_iu', 'val/unseen/fwavacc','elapsed_time']
+        else:
+            self.val_log_headers = ['epoch', 'iteration', 'val/loss', 'val/pxl_acc', 'val/class_acc', 'val/mean_iu', 'val/fwavacc', 'elapsed_time']
 
         if not osp.exists(osp.join(self.out, 'train_log.csv')):
             with open(osp.join(self.out, 'train_log.csv'), 'w') as f:
@@ -80,9 +94,9 @@ class Trainer(object):
 
         # get loss
         if self.pixel_embeddings:
-            if self.training_loss_func == "cos":
-                loss = utils.cosine_loss(score, target, target_embed, background_loss=self.background_loss, size_average=True) # TODO: fix this
-            elif self.training_loss_func == "mse":
+            if self.loss_func == "cos":
+                loss = utils.cosine_loss(score, target, target_embed, background_loss=self.background_loss, size_average=True)
+            elif self.loss_func == "mse":
                 loss = utils.mse_loss(score, target, target_embed, background_loss=self.background_loss, size_average=True)
             else:
                 raise Exception("Unknown Loss Function")
@@ -92,20 +106,49 @@ class Trainer(object):
         if np.isnan(float(loss.data[0])):
             raise ValueError('loss is nan while training')
 
-        ## evaluate inference 
-        # TODO: uncomment these 3 lines once inference is infer_lbl is working
+        # evaluate inference 
         if self.pixel_embeddings:
-            lbl_pred = utils.infer_lbl(score, self.embeddings, self.cuda) # TODO: fix lbl_pred
+            lbl_pred = utils.infer_lbl(score, self.embeddings, self.cuda)
         else:
             lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
         lbl_true = target.data.cpu()
 
         return score, loss, lbl_pred, lbl_true
 
+    def is_target_good(self, target, mode):
+        if self.pixel_embeddings:
+            target = target[0]
+        target = target.numpy()
+
+        # context dataset: check if image contains invalid class (-1)
+        # note: we don't care if pascal's target has -1 because we treat 
+        #   as backgorund (0) for embeddings and ignore for val metrics
+        if self.dataset == 'context':
+            mask = target<0
+            if np.sum(mask) > 0:
+                if mode == 'train' and self.epoch == 0:
+                    self.train_ignored_img += 1
+                elif mode == 'val' and self.epoch == 0:
+                    self.val_ignored_img += 1
+                return False
+
+        # training: check if image contains unseen class
+        if mode == 'train':
+            mask = np.in1d(target.ravel(), self.unseen).reshape(target.shape)
+            if np.sum(mask) > 0:
+                if self.epoch == 0:
+                    self.train_unseen_img += 1
+                return False
+
+        return True
+
     def train_epoch(self):
         self.model.train()
 
         for batch_idx, (data, target) in enumerate(self.train_loader):
+
+            if not self.is_target_good(target, 'train'):
+                continue
 
             score, loss, lbl_pred, lbl_true = self.forward(data, target)
 
@@ -118,7 +161,7 @@ class Trainer(object):
                 float(self.model.upscore.weight.grad.sum().data[0]), float(score.sum().data[0])))
 
             # update the training logs
-            metrics = utils.label_accuracy_score(lbl_true.numpy(), lbl_pred, n_class=self.n_class)
+            metrics = utils.label_accuracy_score(lbl_true.numpy(), lbl_pred, self.n_class)
             with open(osp.join(self.out, 'train_log.csv'), 'a') as f:
                 elapsed_time = (datetime.datetime.now(pytz.timezone('US/Eastern')) - self.timestamp_start).total_seconds()
                 log = [self.epoch, self.iteration] + [loss.data[0]] + list(metrics) + [elapsed_time]
@@ -134,6 +177,12 @@ class Trainer(object):
 
             self.iteration += 1
 
+        if self.epoch == 0:
+            self.train_seen = len(self.train_loader) - self.train_ignored_img - self.train_unseen_img
+            self.tb_writer.add_text('train/seen_img',  str(self.train_seen))
+            self.tb_writer.add_text('train/unseen_img', str(self.train_unseen_img))
+            self.tb_writer.add_text('train/ignored_img', str(self.train_ignored_img))
+
     def validate(self):
         self.model.eval()
 
@@ -142,19 +191,29 @@ class Trainer(object):
 
         for batch_idx, (data, target) in enumerate(self.val_loader):
 
+            if not self.is_target_good(target, 'val'):
+                continue
+
             score, loss, lbl_pred, lbl_true = self.forward(data, target)
 
             val_loss += float(loss.data[0])
             print("Test Epoch {:<5} | Iteration {:<5} | Loss {:5.5f} | Score Sum {:10.5f}".format(int(self.epoch), int(batch_idx), float(loss.data[0]), float(score.sum().data[0])))
 
-            # generate visualization for first 9 images of val_loader
             img, lt, lp = data[0], lbl_true[0], lbl_pred[0] # eliminate first dimension (n=1) for visualization
             img, lt = self.val_loader.dataset.untransform(img, lt)
             lbl_trues.append(lt)
             lbl_preds.append(lp)
+
+            # generate visualization for first 9 images of val_loader
             if len(visualizations) < 9:
-                viz = fcn.utils.visualize_segmentation(lbl_pred=lp, lbl_true=lt, img=img, n_class=self.n_class)
+                viz = fcn.utils.visualize_segmentation(lbl_pred=lp, lbl_true=lt, img=img, n_class=self.n_class, label_names=self.label_names)
                 visualizations.append(viz)
+
+        # write validation set summary to tensorboard
+        if self.epoch == 0:
+            self.val_total_img = len(self.val_loader) - self.val_ignored_img
+            self.tb_writer.add_text('val/total_img', str(self.val_total_img))
+            self.tb_writer.add_text('val/ignored_images', str(self.val_ignored_img))
 
         # save the visualizaton image
         out = osp.join(self.out, 'visualization_viz')
@@ -165,15 +224,37 @@ class Trainer(object):
         scipy.misc.imsave(out_file, viz_img)
 
         # update the validation log for the current epoch
-        metrics = utils.label_accuracy_score(lbl_trues, lbl_preds, self.n_class)
-        val_loss /= len(self.val_loader) # val loss is averaged across all the images
+        if self.unseen:
+            metrics = utils.label_accuracy_score(lbl_trues, lbl_preds, self.n_class, unseen=self.unseen)
+            metrics, seen_metrics, unseen_metrics = metrics
+
+            self.tb_writer.add_scalar('val/seen/pxl_acc', seen_metrics[0], self.epoch)
+            self.tb_writer.add_scalar('val/seen/class_acc', seen_metrics[1], self.epoch)
+            self.tb_writer.add_scalar('val/seen/mean_iu', seen_metrics[2], self.epoch)
+            self.tb_writer.add_scalar('val/seen/fwavacc', seen_metrics[3], self.epoch)
+
+            self.tb_writer.add_scalar('val/unseen/pxl_acc', unseen_metrics[0], self.epoch)
+            self.tb_writer.add_scalar('val/unseen/class_acc', unseen_metrics[1], self.epoch)
+            self.tb_writer.add_scalar('val/unseen/mean_iu', unseen_metrics[2], self.epoch)
+            self.tb_writer.add_scalar('val/unseen/fwavacc', unseen_metrics[3], self.epoch)
+
+            # TODO: add seen and unseen metics to logging files
+
+        else:
+            metrics = utils.label_accuracy_score(lbl_trues, lbl_preds, self.n_class)
+        
+        val_loss /= self.val_total_img # val loss is averaged across all the images
+
         with open(osp.join(self.out, 'val_log.csv'), 'a') as f:
             elapsed_time = datetime.datetime.now(pytz.timezone('US/Eastern')) - self.timestamp_start
-            log = [self.epoch, self.iteration] + [val_loss] + list(metrics) + [elapsed_time]
+            if self.unseen:
+                log = [self.epoch, self.iteration] + [val_loss] + list(metrics) + list(seen_metrics) + list(unseen_metrics) + [elapsed_time]
+            else:
+                log = [self.epoch, self.iteration] + [val_loss] + list(metrics) + [elapsed_time]
             log = map(str, log)
             f.write(','.join(log) + '\n')
 
-        # write to tensorboard
+        # write metrics to tensorboard
         self.tb_writer.add_scalar('val/loss', val_loss, self.epoch)
         self.tb_writer.add_scalar('val/pxl_acc', metrics[0], self.epoch)
         self.tb_writer.add_scalar('val/class_acc', metrics[1], self.epoch)
@@ -201,7 +282,7 @@ class Trainer(object):
         if is_best:
             shutil.copy(osp.join(self.out, 'checkpoint'), osp.join(self.out, 'best'))
 
-    def train(self):    
+    def train(self):
         for epoch in range(self.max_epoch):
             self.epoch = epoch
             self.train_epoch()
