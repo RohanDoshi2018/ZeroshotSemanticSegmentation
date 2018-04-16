@@ -15,6 +15,7 @@ import pickle
 import utils
 import vis_utils
 
+# trainer for the binary seen/unseen classifier
 class Trainer(object):
 
     def __init__(self, cuda, model, optimizer, train_loader, val_loader, out, dataset, max_epoch, tb_writer, size_average=False, 
@@ -306,3 +307,10 @@ class Trainer(object):
             cur_iter = self.epoch * self.train_seen
             if cur_iter > target_iter:
                 break
+
+        # train binary classifier 
+        if self.pixel_embeddings and self.seen_classifier:
+            for epoch in range(self.max_seen_clf_epoch):
+                self.seen_clf_epoch = epoch
+                self.train_seen_clf()
+                self.validate_seen_clf()

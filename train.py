@@ -10,151 +10,7 @@ import pascal_dataset, context_dataset
 import models, trainer
 import torch.nn as nn
 from tensorboardX import SummaryWriter
-
-configurations = {
-
-    ## PASCAL
-
-    # fcn baseline: no embeddings, softmax output (mse optimizer)
-    1: dict(
-        max_epoch=50,
-        lr=1e-10,
-        momentum=0.99,
-        weight_decay=0.0005,
-        embed_dim=0,
-        one_hot_embed=False,
-        loss_func=None, # not used
-        bk_loss=True,
-        unseen=None,
-        dataset='pascal',
-        optimizer='sgd',
-    ),
-
-    # fcn baseline, but with adam optimizer; 1 vs 2 conclusion: use adam optimizer 
-    2: dict(
-        max_epoch=50,
-        lr=1e-5,
-        momentum=None,
-        weight_decay=0,
-        embed_dim=0,
-        one_hot_embed=False,
-        loss_func=None,
-        bk_loss=True,
-        unseen=None,
-        dataset='pascal',
-        optimizer='adam',
-    ),
-
-
-    # 21D one-hot embeddings, mse loss
-    3: dict(
-        max_epoch=50,
-        lr=1e-5,
-        momentum=None,
-        weight_decay=0,
-        embed_dim=21,
-        one_hot_embed=True,
-        loss_func='mse',
-        bk_loss=True,
-        unseen=None,
-        dataset='pascal',
-        optimizer='adam',
-    ),
-
-    # 21D one-hot, cosine loss; 3 vs 4 conclusion: use cosine loss
-    4: dict(
-        max_epoch=50,
-        lr=1e-5,
-        momentum=None,
-        weight_decay=0,
-        embed_dim=21,
-        one_hot_embed=True,
-        loss_func='cos',
-        bk_loss=True,
-        unseen=None,
-        dataset='pascal',
-        optimizer='adam',
-    ),
-
-    # 20D; mse vs cos args conclusion: use cosine loss
-    5: dict(
-        max_epoch=50, # 8498 training images
-        lr=5e-5,
-        momentum=None,
-        weight_decay=None,
-        embed_dim=20,
-        one_hot_embed=False,
-        loss_func='cos',
-        bk_loss=True,
-        unseen=None,
-        dataset='pascal',
-        optimizer='adam',
-    ),
-
-    # 20D zeroshot (unseen: 10 classes)
-    6: dict(
-        max_epoch=130, # 3311 seen and 5187 unseen training images
-        lr=1e-5,
-        momentum=None,
-        weight_decay=None,
-        embed_dim=20,
-        one_hot_embed=False,
-        loss_func='cos',
-        bk_loss=True,
-        unseen=[6, 7, 13, 14, 15, 16, 17, 18, 19, 20],
-        dataset='pascal',
-        optimizer='adam',
-    ),
-
-    ## CONTEXT
-
-    # 20D context
-    7: dict(
-        max_epoch=50,
-        lr=5e-5,
-        momentum=None,
-        weight_decay=None,
-        embed_dim=20,
-        one_hot_embed=False,
-        loss_func='cos',
-        bk_loss=True,
-        unseen=None,
-        dataset='context',
-        optimizer='adam',
-    ),
-
-    # 20D context zeroshot (unseen: 16 classes)
-    8: dict(
-        max_epoch=100,
-        lr=1e-5,
-        momentum=None,
-        weight_decay=None,
-        embed_dim=20,
-        one_hot_embed=False,
-        loss_func='cos',
-        bk_loss=True,
-        unseen=[2,4,6,8,10],
-        # unseen=[2+2*i for i in range(16)], # 2, 4, ..., 32
-        dataset='context',
-        optimizer='adam',
-    ),
-
-    # 20D zeroshot with forced unseen (unseen: 10 classes)
-    9: dict(
-        max_epoch=130,
-        lr=1e-5,
-        momentum=None,
-        weight_decay=None,
-        embed_dim=20,
-        one_hot_embed=False,
-        loss_func='cos',
-        bk_loss=True,
-        unseen=[6, 7, 13, 14, 15, 16, 17, 18, 19, 20],
-        dataset='pascal',
-        optimizer='adam',
-    ),
-
-}
+from configs import configurations
 
 def get_log_dir(model_name, cfg, cfg_num, data_dir):
     if model_name:
@@ -163,7 +19,9 @@ def get_log_dir(model_name, cfg, cfg_num, data_dir):
         name = ''
     name += "_CFG_%d" % int(cfg_num)
     for k, v in cfg.items():
-        if k == 'unseen':
+        if k == 'resume_model_path':
+            continue
+        elif k == 'unseen':
             if cfg['unseen']:
                 name += '_%s_%s' % (k.upper(), str(True))
             else:
@@ -186,40 +44,49 @@ def write_cfg_to_tb(cfg, writer):
     for k, v in cfg.items():
         writer.add_text("cfg/%s" % k.upper(), str(v))
 
-def get_parameters(model, bias=False):
-    modules_skipped = (
-        nn.ReLU,
-        nn.MaxPool2d,
-        nn.Dropout2d,
-        nn.Sequential,
-        models.FCN32s,
-    )
-    for m in model.modules():
-        if isinstance(m, nn.Conv2d):
-            if bias:
-                yield m.bias
+def get_parameters(model, bias=False, seen_clf=False, fixed_vgg=False):
+    if seen_clf:
+        for p in model.seen_clf_score.parameters():
+            yield p
+    elif fixed_vgg:
+        for p in model.score_fr.parameters():
+            yield p
+        for p in model.upscore.parameters():
+            yield p
+    else:
+        modules_skipped = (
+            nn.ReLU,
+            nn.MaxPool2d,
+            nn.Dropout2d,
+            nn.Sequential,
+            models.FCN32s,
+        )
+        for m in model.modules():
+            if isinstance(m, nn.Conv2d):
+                if bias:
+                    yield m.bias
+                else:
+                    yield m.weight
+            elif isinstance(m, nn.ConvTranspose2d):
+                # weight is frozen because it is just a bilinear upsampling
+                if bias:
+                    assert m.bias is None
+            elif isinstance(m, modules_skipped):
+                continue
             else:
-                yield m.weight
-        elif isinstance(m, nn.ConvTranspose2d):
-            # weight is frozen because it is just a bilinear upsampling
-            if bias:
-                assert m.bias is None
-        elif isinstance(m, modules_skipped):
-            continue
-        else:
-            raise ValueError('Unexpected module: %s' % str(m))
+                raise ValueError('Unexpected module: %s' % str(m))
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--name', type=str, default=None, help='name of checkpoint folder')
+    parser.add_argument('-m', '--mode', type=str, choices=['train','test'], help='train or test; must provide model for test')
     parser.add_argument('-g', '--gpu', type=int, default=0, help='gpu number; -1 for cpu')
-    parser.add_argument('-r', '--resume', help='checkpoint path')
-    parser.add_argument('-c', '--config', type=int, default=3, choices=configurations.keys()) # reset to default 1 eventually
+    parser.add_argument('-r', '--resume', help='model checkpoint path; required for test mode')
+    parser.add_argument('-c', '--config', type=int, default=5, choices=configurations.keys()) # reset to default 1 eventually
     parser.add_argument('-me', '--max_epoch', type=int, help='maximum number of training epochs')
     parser.add_argument('-lr', '--learning_rate', type=float, help='learning rate')
     parser.add_argument('-e', '--embed_dim', type=int, help='dimensionality of joint embeddings space')
     parser.add_argument('-loss', '--loss_func', type=str, choices=['cos','mse', None], help='training loss function if using embeddings')
-    parser.add_argument('-bkl', '--bk_loss', type=bool, help='compute loss on background pixels?')
     parser.add_argument("-d", "--dataset", type=str, choices=['pascal', 'context'], help='dataset name')
     parser.add_argument("-dir", "--data_dir", type=str, default='/opt/visualai/rkdoshi/ZeroshotSemanticSegmentation', help=' path where to store dataset, logs, and models')
     parser.add_argument("-tb", "--tb_dir", type=str, default='/opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/tb', help='path to tensorboard directory')
@@ -230,7 +97,6 @@ def main():
     args = parser.parse_args()
     name = args.name
     gpu = args.gpu
-    resume = args.resume
     cfg = configurations[args.config]
     data_dir = args.data_dir
     tb_dir = args.tb_dir
@@ -244,17 +110,22 @@ def main():
         cfg['lr'] = args.learning_rate
     if args.loss_func:
         cfg['loss_func'] = args.loss_func
-    if args.bk_loss:
-        cfg['bk_loss'] = args.bk_loss
     if args.dataset:
         cfg['dataset'] = args.dataset
     if args.optim:
         cfg['optimizer'] = args.optim
     if args.unseen:
         cfg['unseen'] = [int(item) for item in args.unseen.split(',')]
+    if args.mode:
+        cfg['mode'] = args.mode
+    if args.resume:
+        cfg['resume_model_path'] = args.resume
 
     if cfg['one_hot_embed'] and cfg['embed_dim'] != 21 and cfg['dataset'] == "pascal":
         raise Exception('joint-embedding space must be size of one-hot embedding space')
+
+    if cfg['mode'] == 'test' and not cfg.get('resume_model_path'):
+        raise Exception('must load model path via -r flag for test mode')
 
     # initialize logging
     if not os.path.exists(data_dir):
@@ -276,35 +147,23 @@ def main():
         torch.cuda.manual_seed(1337)
 
     # 1. dataset
-    kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
-    label_names = None
+    # TODO: preprocess and partition the training data into train_seen and train_unseen; build data loaders
+    kwargs = {'transform': True, 'embed_dim': cfg['embed_dim'], 'one_hot_embed': cfg['one_hot_embed'], 'data_dir': data_dir}
     if cfg['dataset'] == "pascal":
-
         pascal_dataset.download(data_dir)
-
-        train_dataset = pascal_dataset.SBDClassSeg(split='train', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, **kwargs)
-
-        val_dataset = pascal_dataset.VOC2011ClassSeg(split='seg11valid', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, **kwargs)
-
-        label_names = train_dataset.class_names
-
+        train_dataset = pascal_dataset.PascalVOC(split='train', **kwargs)
+        val_dataset = pascal_dataset.PascalVOC(split='val', **kwargs)
     elif cfg['dataset'] == "context":
-
         context_dataset.download(data_dir)
-
-        train_dataset = context_dataset.VOCContext(split='train', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, **kwargs)
-
-        val_dataset = context_dataset.VOCContext(split='val', transform=True, embed_dim=cfg['embed_dim'], one_hot_embed=cfg['one_hot_embed'], data_dir=data_dir)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, **kwargs)  
-
-        label_names = train_dataset.class_names 
-
+        train_dataset = context_dataset.PascalContext(split='train', **kwargs)
+        val_dataset = context_dataset.PascalContext(split='val', **kwargs)
     else:
+        raise Exception("unknown dataset")
 
-        raise Exception("Datasets apart from Pascal not implemented")
+    kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, **kwargs)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, **kwargs)  
+    label_names = train_dataset.class_names 
 
     # 2. model
     if cfg['embed_dim']:
@@ -313,40 +172,62 @@ def main():
         model = models.FCN32s(n_class=21)
     start_epoch = 0
     start_iteration = 0
-    if resume:
-        checkpoint = torch.load(resume)
+    
+    if cfg.get('resume_model_path'):
+        load_path =  osp.join(data_dir, 'logs', cfg['resume_model_path'], 'best')
+        checkpoint = torch.load(load_path)
         model.load_state_dict(checkpoint['model_state_dict'])
         start_epoch = checkpoint['epoch']
         start_iteration = checkpoint['iteration']
     else:
         vgg16 = models.VGG16(pretrained=True, data_dir=data_dir)
         model.copy_params_from_vgg16(vgg16)
+
+    # treat VGG as visual feature extractor by freezing weights upto fc7
+    if cfg['fixed_vgg']:
+        for param in model.parameters():
+            param.requires_grad = False
+        for p in model.score_fr.parameters():
+            p.requires_grad = True
+        for p in model.upscore.parameters():
+            p.requires_grad = True
+
     if cuda:
         model = model.cuda()
 
     # 3. optimizer
+
+    # TODO: initialize optimizer for seen classifier
+    # TODO: figure out how to fix VGG weights when training the seen classifier
+
     if cfg['optimizer'] == "sgd":
-        optim = torch.optim.SGD(
-            [
+        if cfg['fixed_vgg']:
+            params = [{'params': get_parameters(model, fixed_vgg=True)}]
+        else:
+            params =  [
                 {'params': get_parameters(model, bias=False)},
                 {'params': get_parameters(model, bias=True), 'lr': cfg['lr'] * 2, 'weight_decay': 0}, # Conv2D bias
-            ],
-            lr=cfg['lr'],
-            momentum=cfg['momentum'],
-            weight_decay=cfg['weight_decay'])
+            ]
+
+        optim = torch.optim.SGD(params, lr=cfg['lr'], momentum=cfg['momentum'], weight_decay=cfg['weight_decay'])
     elif cfg['optimizer'] == "adam":
-        optim = torch.optim.Adam([
-            {'params': get_parameters(model, bias=False)},
-            {'params': get_parameters(model, bias=True), 'lr': 2 * cfg['lr']}, # Conv2D bias
-        ],
-        lr=cfg['lr'])
+        if cfg['fixed_vgg']:
+            params = [{'params': get_parameters(model, fixed_vgg=True)}]
+        else:
+            params = [
+                {'params': get_parameters(model, bias=False)},
+                {'params': get_parameters(model, bias=True), 'lr': cfg['lr'] * 2}, # Conv2D bias
+            ]
+
+        optim = torch.optim.Adam(params,lr=cfg['lr'])
     else:
         raise Exception("Unknown optimizer chosen")
 
-    if resume:
+    if cfg.get('resume_model_path'):
         optim.load_state_dict(checkpoint['optim_state_dict'])
 
-    # 4. training
+    # 4. train visual network
+    forced_unseen = cfg.get('forced_unseen')
 
     fcn_trainer = trainer.Trainer(
         cuda=cuda,
@@ -359,15 +240,45 @@ def main():
         max_epoch=cfg['max_epoch'],
 		pixel_embeddings=cfg['embed_dim'],
         loss_func=cfg['loss_func'],
-        background_loss=cfg['bk_loss'],
         tb_writer=tb_writer,
         unseen=cfg['unseen'],
         label_names=label_names,
+        forced_unseen=forced_unseen,
     )
     fcn_trainer.epoch = start_epoch
     fcn_trainer.iteration = start_iteration
-    fcn_trainer.train()
 
+    # 5. TODO: train seen pixel clasifier
+
+    # # TODO: fix vgg weights, only learn final linear layer 
+    # # for binary seen pixel classification
+    # if cfg['train_unseen']:
+    #     for param in model.parameters():
+    #         param.requires_grad = False
+    #     for p in model.seen_clf_score.parameters():
+    #         p.requires_grad = True
+
+    #     seen_pxl_trainer = seen_trainer.Trainer(
+    #         cuda=cuda,
+    #         model=model,
+    #         optimizer=optim, # TODO: change
+    #         train_loader=train_loader, # TODO: change
+    #         val_loader=val_loader, # TODO: change
+    #         out=out,
+    #         dataset=cfg['dataset'], # TODO: change
+    #         max_epoch=cfg['max_epoch'], # TODO: change
+    #         pixel_embeddings=cfg['embed_dim'], # TODO: change
+    #         loss_func=cfg['loss_func'], # TODO: change
+    #         tb_writer=tb_writer,
+    #         unseen=cfg['unseen'], # TODO: change
+    #         label_names=label_names, # TODO: change
+    #         forced_unseen=forced_unseen, # TODO: change
+    #     )
+
+    if cfg['mode'] == 'train':
+        fcn_trainer.train()
+    elif cfg['mode'] == 'test':
+        fcn_trainer.validate()
 
 if __name__ == '__main__':
     main()

@@ -1,4 +1,3 @@
-import collections
 import os
 import os.path as osp
 import numpy as np
@@ -12,41 +11,41 @@ import shutil
 import urllib.request
 import tarfile
 
-class VOCContext():
+class PascalContext():
     class_names = [
-        'aeroplane',    # class #1
-        'bicycle',      # class #2
-        'bird',         # class #3
-        'boat',         # class #4
-        'bottle',       # class #5
-        'bus',          # class #6
-        'car',          # class #7
-        'cat',          # class #8
-        'chair',        # class #9
-        'cow',          # class #10
-        'diningtable',  # class #11
-        'dog',          # class #12
-        'horse',        # class #13
-        'motorbike',    # class #14
-        'person',       # class #15
-        'pottedplant',  # class #16
-        'sheep',        # class #17
-        'sofa',         # class #18
-        'train',        # class #19
-        'tvmonitor',    # class #20
-        'sky',          # class #21
-        'grass',        # class #22
-        'ground',       # class #23
-        'road',         # class #24
-        'building',     # class #25
-        'tree',         # class #26
-        'water',        # class #27
-        'mountain',     # class #28
-        'wall',         # class #29
-        'floor',        # class #30
-        'track',        # class #31
-        'keyboard',     # class #32
-        'ceiling',      # class #33
+        'aeroplane',    # class #0
+        'bicycle',      # class #1
+        'bird',         # class #2
+        'boat',         # class #3
+        'bottle',       # class #4
+        'bus',          # class #5
+        'car',          # class #6
+        'cat',          # class #7
+        'chair',        # class #8
+        'cow',          # class #9
+        'diningtable',  # class #10
+        'dog',          # class #11
+        'horse',        # class #12
+        'motorbike',    # class #13
+        'person',       # class #14
+        'pottedplant',  # class #15
+        'sheep',        # class #16
+        'sofa',         # class #17
+        'train',        # class #18
+        'tvmonitor',    # class #19
+        'sky',          # class #20
+        'grass',        # class #21
+        'ground',       # class #22
+        'road',         # class #23
+        'building',     # class #24
+        'tree',         # class #25
+        'water',        # class #26
+        'mountain',     # class #27
+        'wall',         # class #28
+        'floor',        # class #29
+        'track',        # class #30
+        'keyboard',     # class #31
+        'ceiling',      # class #32
     ]
     mean_bgr = np.array([104.00698793, 116.66876762, 122.67891434])
 
@@ -57,18 +56,21 @@ class VOCContext():
         self.one_hot_embed = one_hot_embed
         self.data_dir = data_dir     
 
+        if self.split not in ['train', 'val']:
+            raise Exception("unexpected split for context dataset")
+
         if self.embed_dim or self.one_hot_embed:
             self.init_embeddings()
 
         dataset_dir = self.data_dir + '/pascal/VOCdevkit/VOC2012'
-        self.files = collections.defaultdict(list)
-        for split in ['train', 'val']:
-            split_file = osp.join('datasets/context/%s.txt' % split)
-            for did in open(split_file):
-                did = did.strip()
-                img_file = osp.join(dataset_dir, 'JPEGImages/%s.jpg' % did)
-                lbl_file = osp.join(self.data_dir, 'context/33_context_labels/%s.png' % did)
-                self.files[split].append({'img': img_file, 'lbl': lbl_file}) # TODO: revert
+        self.files = []
+
+        split_file = 'datasets/context/%s.txt' % self.split
+        for did in open(split_file):
+            did = did.strip()
+            img_file = osp.join(dataset_dir, 'JPEGImages/%s.jpg' % did)
+            lbl_file = osp.join(self.data_dir, 'context/33_context_labels/%s.png' % did)
+            self.files.append({'img': img_file, 'lbl': lbl_file})
 
 
     # TODO: make VOC context embeddings (including onehot)
@@ -84,10 +86,10 @@ class VOCContext():
         self.embeddings.weight.data.copy_(torch.from_numpy(embed_arr))
 
     def __len__(self):
-        return len(self.files[self.split])
+        return len(self.files)
 
     def __getitem__(self, index):
-        data_file = self.files[self.split][index]
+        data_file = self.files[index]
         # load image
         img_file = data_file['img']
         img = PIL.Image.open(img_file)
@@ -132,9 +134,7 @@ class VOCContext():
         return img, lbl
 
 def download(data_dir):
-
-    # confirm in currenet working directory
-    os.chdir(os.path.dirname(__file__))
+    os.chdir(os.path.dirname(__file__)) # confirm in currenet working directory
 
     if not osp.exists(data_dir + '/context/33_context_labels'):
         os.makedirs(data_dir+'/context', exist_ok=True)

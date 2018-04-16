@@ -14,44 +14,55 @@
 ./train.py -c 4  -n one_hot_cos -lr 1e-5  -g 1
     one_hot_cos_CFG_4_MAX_EPOCH_50_LR_1e-05_MOMENTUM_None_WEIGHT_DECAY_0_EMBED_DIM_21_ONE_HOT_EMBED_True_TRAIN_LOSS_FUNC_cos_BACKGROUND_LOSS_True_ZEROSHOT_False_DATASET_pascal_OPTIMIZER_adam_TIME-20180308-162024
 
-
-# confirm inference is working. appears so using one-hot example
-    ./evaluate.py -g 0
-
-# 20D embeddings, mse loss. visualai-3
-    ./train.py -c 5 -n 20D_mse -lr 5e-5 -e 20 -loss mse -g 1
-
-    20D_mse_CFG_5_MAX_EPOCH_50_LR_5e-05_MOMENTUM_None_WEIGHT_DECAY_None_EMBED_DIM_20_ONE_HOT_EMBED_False_TRAIN_LOSS_FUNC_mse_BACKGROUND_LOSS_True_ZEROSHOT_False_DATASET_pascal_OPTIMIZER_adam_TIME-20180308-232737
-
-# 20D embeddings, cos loss. visualai-3
-    ./train.py -c 5 -n 20D_cos -lr 1e-5 -e 20 -loss cos -g 2
-
-
-# 20D embeddings, zero-shot, cos loss. visualai-2
-    ./train.py -c 6 -n 20D_zeroshot -lr 1e-5 -g 0
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# 20D pascal
-    ./train.py -c 5 -n 20D_pascal -lr 1e-5 -g 0
+# 20D pascal (can compare cos and mse loss in analysis)
+    ./train.py -c 5 -n 20D_pascal -lr 1e-5 -g 1
+    20D_pascal_CFG_5_MAX_EPOCH_50_LR_1e-05_MOMENTUM_None_WEIGHT_DECAY_None_EMBED_DIM_20_ONE_HOT_EMBED_False_LOSS_FUNC_cos_BK_LOSS_True_UNSEEN_False_DATASET_pascal_OPTIMIZER_adam_TIME-20180409-000926
 
 # 20D pascal zeroshot (unseen: 10 classes)
-    ./train.py -c 6 -n 20D_pascal_zeroshot -lr 1e-5 -g 0
+    ./train.py -c 6 -n 20D_pascal_zeroshot -lr 1e-5 -g 3
+    20D_pascal_zeroshot_CFG_6_MAX_EPOCH_130_LR_1e-05_MOMENTUM_None_WEIGHT_DECAY_None_EMBED_DIM_20_ONE_HOT_EMBED_False_LOSS_FUNC_cos_BK_LOSS_True_UNSEEN_True_DATASET_pascal_OPTIMIZER_adam_TIME-20180409-130600
 
 # 20D context
     ./train.py -c 7 -n 20D_context -lr 1e-5 -g 2
-
-# 20D context zeroshot (unseen: 16 classes)
-    ./train.py -c 8 -n 20D_context_zeroshot -lr 1e-5 -g 3
-
-# 20D train pascal (no background loss), val context (TODO: fix overlapping train and val splits; integrate dreamscales)
+    20D_context_CFG_7_MAX_EPOCH_50_LR_1e-05_MOMENTUM_None_WEIGHT_DECAY_None_EMBED_DIM_20_ONE_HOT_EMBED_False_LOSS_FUNC_cos_BK_LOSS_True_UNSEEN_False_DATASET_context_OPTIMIZER_adam_TIME-20180409-000936
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+# 20D context zeroshot (unseen: 5 classes)
+    ./train.py -c 8 -n 20D_context_zeroshot -lr 1e-5 -g 0
+    20D_context_zeroshot_CFG_8_MODE_train_DATASET_context_UNSEEN_True_EMBED_DIM_20_MAX_EPOCH_200_LR_1e-05_LOSS_FUNC_cos_OPTIMIZER_adam_MOMENTUM_None_WEIGHT_DECAY_None_ONE_HOT_EMBED_False_TIME-20180409-211634
+
+# testing: 20D 10/10 pascal zeroshot with forced unseen inference
+    ./train.py -c 9 -n trash_forced_unseen -g 1
+        have to manually set forced_unseen in cfg...
+
+# 20D 18/2 pascal zeroshot
+    ./train.py -c 10 -n 20D_pascal_zeroshot_18_2 -g 1 -e 20
+
+    20D_pascal_zeroshot_18_2_CFG_10_MODE_train_DATASET_pascal_UNSEEN_True_EMBED_DIM_20_MAX_EPOCH_200_LR_1e-05_MOMENTUM_None_WEIGHT_DECAY_None_LOSS_FUNC_cos_OPTIMIZER_adam_ONE_HOT_EMBED_False_TIME-20180410-155755
+
+# -c 13
+    ./train.py -c 13 -n trash_test_18_2 -g 1
+
+
+
+column -s, -t < val_log.csv | less -#2 -N -S
+
+
+
+# 20D 18/2 pascal zeroshot with fixed vgg
+    ./train.py -c 11 -n 20D_pascal_zeroshot_18_2_fixed_vgg -g 0
+
+    20D_pascal_zeroshot_18_2_fixed_vgg_CFG_11_MODE_train_DATASET_pascal_UNSEEN_True_EMBED_DIM_20_MAX_EPOCH_200_LR_1e-05_MOMENTUM_None_WEIGHT_DECAY_None_LOSS_FUNC_cos_OPTIMIZER_adam_ONE_HOT_EMBED_False_FIXED_VGG_True_TIME-20180412-141023
+
+
+# testing: 20D 18/2 pascal zeroshot with fixed vgg (cfg11) with/without forced unseen inference
+    ./train.py -c 12 -n trash_18_2_fixed_vgg -g 1
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# 20D train pascal (no background loss), val context (TODO: fix overlapping train and val splits; integrate dreamscales)
+
+
 tensorboard --logdir /opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/tb
-
-
-# resume training for one_hot, with background with 12 epochs alrady at lr 1e-6. 
-
-./train.py -r /opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/logs/_MAX_EPOCH_15_LR_1e-06_MOMENTUM_0.99_WEIGHT_DECAY_0.0005_EMBED_DIM_21_ONE_HOT_EMBED_True_TRAIN_LOSS_FUNC_mse_BACKGROUND_LOSS_True_ZEROSHOT_False_TIME-20180228-082313/best -c 2 -bkl True -lr 1e-5 -me 12 -n resume_bk_train -g 2
 

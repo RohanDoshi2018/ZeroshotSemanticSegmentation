@@ -36,8 +36,10 @@ class FCN32s(nn.Module):
             md5='8acf386d722dc3484625964cbe2aba49',
         )
 
-    def __init__(self, n_class=21):
+    def __init__(self, n_class=21, seen_clf=False):
         super(FCN32s, self).__init__()
+        self.seen_clf = seen_clf
+
         # conv1
         self.conv1_1 = nn.Conv2d(3, 64, 3, padding=100)
         self.relu1_1 = nn.ReLU(inplace=True)
@@ -92,6 +94,10 @@ class FCN32s(nn.Module):
         self.score_fr = nn.Conv2d(4096, n_class, 1)
         self.upscore = nn.ConvTranspose2d(n_class, n_class, 64, stride=32,
                                           bias=False)
+        
+        # for classifying seen pixels
+        if self.seen_clf:
+            self.seen_clf_score = nn.Conv2d(n_class, 2, 1)
 
         self._initialize_weights()
 
@@ -108,7 +114,7 @@ class FCN32s(nn.Module):
                     m.in_channels, m.out_channels, m.kernel_size[0])
                 m.weight.data.copy_(initial_weight)
 
-    def forward(self, x):
+    def forward(self, x, seen_clf_mode=False):
         h = x
         h = self.relu1_1(self.conv1_1(h))
         h = self.relu1_2(self.conv1_2(h))
@@ -139,12 +145,14 @@ class FCN32s(nn.Module):
         h = self.relu7(self.fc7(h))
         h = self.drop7(h)
 
-        h = self.score_fr(h)
+        if seen_clf_mode:
+            h = self.seen_clf_score(h)
+        else:
+            h = self.score_fr(h)
+            h = self.upscore(h)
+            h = h[:, :, 19:19 + x.size()[2], 19:19 + x.size()[3]].contiguous()
 
-        h = self.upscore(h)
-        h = h[:, :, 19:19 + x.size()[2], 19:19 + x.size()[3]].contiguous()
-
-        return h
+        return h     
 
     def copy_params_from_vgg16(self, vgg16):
         features = [

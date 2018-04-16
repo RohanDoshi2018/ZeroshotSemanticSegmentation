@@ -85,9 +85,10 @@ python train.py -c 3 --data_dir data;
 tensorboard --logdir /opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/tb
 ```
 
-## Zero-Shot Class Split
+## Pascal Zero-Shot Class Split
 
 #### SEEN (10 classes)
+'background',    # class 0
 
 'aeroplane',     # class 1 VEHICLES (3x)
 
@@ -130,3 +131,46 @@ tensorboard --logdir /opt/visualai/rkdoshi/ZeroshotSemanticSegmentation/tb
 'sofa',          # class 18
 
 'tv/monitor',    # class 20
+
+
+
+# Context Zero-shot class split (dense)
+
+1: aeroplane # unseen
+2: bicycle
+4: boat
+6: bus
+7: car
+14: motorbike
+19: train
+
+3: bird
+8: cat
+10: cow
+12: dog
+13: horse # unseen
+15: person
+17: sheep
+
+5: bottle
+9: chair
+11: diningtable 
+16: pottedplant # unseen
+18: sofa
+20: tvmonitor
+32: keyboard # unseen
+
+21: sky
+22: grass
+23: ground
+24: road
+25: building
+26: tree
+27: water # unseen
+28: mountain
+29: wall
+30: floor
+31: track
+33: ceiling 
+
+
