@@ -1,11 +1,12 @@
+import fcn
 import numpy as np
+import os
 import pickle
 import torch
-from torch.autograd import Variable
 import torch.nn.functional as F
+
 from distutils.version import LooseVersion
-import os
-import fcn
+from torch.autograd import Variable
 
 def load_obj(name):
     with open(name + '.pkl', 'rb') as f:
@@ -46,7 +47,7 @@ def cross_entropy2d(score, target, weight=None, size_average=False):
       loss /= mask.data.sum()
     return loss
 
-def mse_loss(score, target, target_embed, size_average=False):
+def mse_loss(score, target, target_embed):
     """Mean Square Vector between two (n,c,h,w) volumes (score and target).
     ARGS
       score: (n, c, h, w)
@@ -57,11 +58,9 @@ def mse_loss(score, target, target_embed, size_average=False):
     """
     n, c, h, w = score.size()
 
-    # TODO: correctly normalize score to same range as target for each pixel 
-    # clipping?
-
     # apply mask to score and target, and turn into 1d vectors for comparision
     mask = target >= 0 # ignore -1 (unknown classes); don't ignore 0 (background)
+    mask_size = mask.data.sum()
     mask_tensor = mask.view(n,1,h,w).repeat(1,c,1,1)
     score_masked = score[mask_tensor]
     target_embed_masked = target_embed[mask_tensor]
@@ -69,13 +68,11 @@ def mse_loss(score, target, target_embed, size_average=False):
     # # calculate loss on masked score and target
     # same as: loss = (torch.sum((score_masked - target_embed_masked)**2))
     loss = F.mse_loss(score_masked, target_embed_masked, size_average=False)
-
-    if size_average:
-      loss /= mask.data.sum()
+    loss /= mask_size
 
     return loss
 
-def cosine_loss(score, target, target_embed, size_average=False):
+def cosine_loss(score, target, target_embed):
     """Negative Cosine Similarity Loss between two (n,c,h,w) volumes (score and target).
     ARGS
       score: (n, c, h, w)
@@ -101,8 +98,7 @@ def cosine_loss(score, target, target_embed, size_average=False):
     target_embed_masked = target_embed[mask_tensor]
 
     loss = mask_size - torch.sum(score_masked * target_embed_masked)
-    if size_average:
-      loss /= mask_size # divide loss by number of non-masked pixels
+    loss /= mask_size # divide loss by number of non-masked pixels
     return loss
 
 def _fast_hist(label_true, label_pred, n_class, target='all', unseen=None):
@@ -160,10 +156,7 @@ def label_accuracy_score(label_trues, label_preds, n_class, unseen=None):
 # infer lbl for a joint-embedding using nearest neighboring embedding (NNE) inference
 # score: Variable (n,c,h,w)
 # embed_arr: Variable (c, embed_dim) e.g. (21,20)
-def infer_lbl(score, embed_arr, cuda=False, flag=False):
-
-  # if flag: 
-  #   import pdb; pdb.set_trace()
+def infer_lbl(score, embed_arr, cuda=False):
 
   score = score.data
   embed_arr = embed_arr.data
@@ -191,15 +184,22 @@ def infer_lbl(score, embed_arr, cuda=False, flag=False):
   else:
     return indices.view(1,h,w).numpy()
 
-# for seen pixels, inference along all classes. for unseen pixels, inference only among unseen classes
-def infer_lbl_forced_unseen(score, target, all_embed_arr, unseen_embed_arr, unseen, cuda=False):
+# for seen pixels, inference along seen classes. for unseen pixels, inference only among unseen classes
+def infer_lbl_forced_unseen(score, target, seen_embed_arr, unseen_embed_arr, unseen, cuda=False):
+  # make unseen_mask from target and unseen
   target =  target.data.cpu().numpy()
-
   unseen_mask = np.in1d(target.ravel(), unseen).reshape(target.shape)
+  return stich_seen_unseen_with_mask(score, seen_embed_arr, unseen_embed_arr, unseen_mask, cuda)
 
-  all_infer_lbl =  infer_lbl(score, all_embed_arr, cuda=cuda) # inferences among all classes
-  unseen_infer_lbl = infer_lbl(score, unseen_embed_arr, cuda=cuda, flag=True) # inferences among just the unseen classes
+# inference with the full seenmask zeroshot network (szn)
+def infer_lbl_szn(score, seen_mask_score, seen_embed_arr, unseen_embed_arr, cuda=False):
+  # make unseen mask from seen_mask_score
+  seen_mask_score = seen_mask_score.data.max(1)[1].cpu().numpy()[:, :, :]
+  unseen_mask = (1 - seen_mask_score).astype(bool)
+  return stich_seen_unseen_with_mask(score, seen_embed_arr, unseen_embed_arr, unseen_mask, cuda)
 
-  forced_unseen_lbl = all_infer_lbl
-  forced_unseen_lbl[unseen_mask] = unseen_infer_lbl[unseen_mask]
-  return forced_unseen_lbl
+def stich_seen_unseen_with_mask(score, seen_embed_arr, unseen_embed_arr, unseen_mask, cuda):
+  pred_lbl =  infer_lbl(score, seen_embed_arr, cuda=cuda) # inferences among just seen classes
+  unseen_infer_lbl = infer_lbl(score, unseen_embed_arr, cuda=cuda) # inferences among just the unseen classes
+  pred_lbl[unseen_mask] = unseen_infer_lbl[unseen_mask]
+  return pred_lbl

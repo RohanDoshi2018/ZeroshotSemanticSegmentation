@@ -1,0 +1,55 @@
+### fcn baseline with softmax inference
+./train.py -c 1 -n softmax_pascal -d pascal -g 0
+./train.py -c 1 -n softmax_context -d context -g 0
+
+### one-hot 
+# see performance drop from onehot embeddings (perfect) to 21D Word2Vec embeddings
+# TODO: finetune learning rate
+./train.py -c 2 -n 21D -lr 1e-5 -g 0
+./train.py -c 2 -n 21D_one_hot -lr 1e-5 -oh -g 0
+
+### joint embedding model
+# get best embedding size  (writeup assumes 20D is best)
+./train.py -c 4 -n 5D -e 5 -g 0 # TODO: finetune learning rate
+./train.py -c 4 -n 10D -e 10 -g 0 # TODO: finetune learning rate
+./train.py -c 4 -n 20D -e 20 -g 0 # TODO: finetune learning rate
+./train.py -c 4 -n 50D -e 50 -g 0 # TODO: finetune learning rate
+# sgd vs adam
+./train.py -c 4 -n 20D_context -o sgd -g 0
+# loss function
+./train.py -c 4 -n 20D_pascal -loss mse -g 0
+# dataset baselines
+./train.py -c 4 -n 20D_context -d context -g 0
+
+
+### zeroshot 
+./train.py -n "8_2_10" -c 14 -g 2
+
+./train.py -n "8_2_10" -c 15 -g 0 -m "test_fcn"
+./train.py -n "8_2_10" -c 15 -g 0 -m "test_all"
+./train.py -n "8_2_10" -c 15 -g 0 -m "test_fcn" -fu
+
+./train.py -n "16_2_2" -c 16 -g  1
+
+./train.py -n "16_2_2" -c 17 -g 1 -m "test_fcn"
+./train.py -n "16_2_2" -c 17 -g 1 -m "test_all"
+./train.py -n "16_2_2" -c 17 -g 1 -m "test_fcn" -fu
+
+./train.py -n "31_2_2" -c 18 -g 2
+
+./train.py -n "31_2_2" -c 19 -g 2 -m "test_fcn"
+./train.py -n "31_2_2" -c 19 -g 2 -m "test_all"
+./train.py -n "31_2_2" -c 19 -g 2 -m "test_fcn" -fu
+
+
+column -s, -t < val_log.csv | less -#2 -N -S
+
+# one hot with inference (mse)
+# cross dataset zeroshot
+
+
+
+base minimum for monday:
+./train.py -c 4 -n 20D -g 0
+./train.py -c 14 -n "8_2_10" -g 2
+./train.py -c 16 -n "16_2_2" -g 3

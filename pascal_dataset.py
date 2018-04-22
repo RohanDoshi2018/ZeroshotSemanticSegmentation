@@ -1,15 +1,16 @@
+import PIL.Image
+import numpy as np
 import os
 import os.path as osp
-import numpy as np
-import PIL.Image
-import scipy.io
-import torch
-from torch.utils import data
-import utils
 import pickle
+import scipy.io
 import shutil
-import urllib.request
 import tarfile
+import torch
+import urllib.request
+import utils
+
+from torch.utils import data
 
 class PascalVOC(data.Dataset):
     class_names = [
@@ -37,36 +38,56 @@ class PascalVOC(data.Dataset):
     ]
     mean_bgr = np.array([104.00698793, 116.66876762, 122.67891434])
 
-    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False, data_dir='data'):
+    def __init__(self, split='train', transform=False, embed_dim=None, one_hot_embed=False, data_dir='data', train_unseen=[], val_unseen=[]):
         self.split = split
         self._transform = transform
         self.embed_dim = embed_dim # of dimensions for the embed_dim-embeddings
         self.one_hot_embed = one_hot_embed
         self.data_dir = data_dir
+        self.train_unseen = train_unseen
+        self.val_unseen = val_unseen
 
-        if self.split not in ['train', 'val']:
-            raise Exception("unexpected split for context dataset")
+        if self.split not in ['train', 'train_seen', 'val']:
+            raise Exception("unexpected split for pascal dataset")
 
         if self.embed_dim or self.one_hot_embed:
             self.init_embeddings()
 
-        imgsets_file = 'datasets/pascal/%s.txt' % self.split
+        split_file = 'datasets/pascal/%s.txt' % self.split
         self.files = []
 
-        if self.split == "train": # sbd
-            dataset_dir = self.data_dir + '/pascal/benchmark_RELEASE/dataset'
-            for did in open(imgsets_file):
-                did = did.strip()
+        if self.split == 'train_seen':
+            split_file = 'datasets/pascal/train.txt'
+
+        for did in open(split_file):
+            did = did.strip()
+
+            if self.split in ['train', 'train_seen']:
+                dataset_dir = self.data_dir + '/pascal/benchmark_RELEASE/dataset'
                 img_file = osp.join(dataset_dir, 'img/%s.jpg' % did)
                 lbl_file = osp.join(dataset_dir, 'cls/%s.mat' % did)
-                self.files.append({'img': img_file, 'lbl': lbl_file,})
-        elif self.split == "val":
-            dataset_dir = self.data_dir + '/pascal/VOCdevkit/VOC2012'
-            for did in open(imgsets_file):
-                did = did.strip()
+                
+                mat = scipy.io.loadmat(lbl_file)
+                lbl = mat['GTcls'][0]['Segmentation'][0].astype(np.int32) 
+
+            elif self.split == 'val':
+                dataset_dir = self.data_dir + '/pascal/VOCdevkit/VOC2012'
                 img_file = osp.join(dataset_dir, 'JPEGImages/%s.jpg' % did)
                 lbl_file = osp.join(dataset_dir, 'SegmentationClass/%s.png' % did)
-                self.files.append({'img': img_file, 'lbl': lbl_file})
+
+            if self.split == "train":
+                if self.lbl_contains_unseen(lbl, self.val_unseen):
+                    continue
+            elif self.split == "train_seen":
+                if self.lbl_contains_unseen(lbl, self.train_unseen + self.val_unseen):
+                    continue
+            self.files.append({'img': img_file, 'lbl': lbl_file})
+
+    def lbl_contains_unseen(self, lbl, unseen):
+        unseen_pixel_mask = np.in1d(lbl.ravel(), unseen)
+        if np.sum(unseen_pixel_mask) > 0: # ignore images with any train_unseen pixels
+            return True
+        return False
 
     def init_embeddings(self):
         if self.one_hot_embed:
@@ -90,7 +111,7 @@ class PascalVOC(data.Dataset):
         img = np.array(img, dtype=np.uint8)
         # load label
         lbl_file = data_file['lbl']
-        if self.split == 'train':
+        if self.split in ['train', 'train_seen']:
             mat = scipy.io.loadmat(lbl_file)
             lbl = mat['GTcls'][0]['Segmentation'][0].astype(np.int32)  
         elif self.split == 'val': 
@@ -118,7 +139,7 @@ class PascalVOC(data.Dataset):
         img = img[:, :, ::-1]  # RGB -> BGR
         img = img.astype(np.float64)
         img -= self.mean_bgr
-        img = img.transpose(2, 0, 1) # TODO: does this work with self.pixel_embeddings
+        img = img.transpose(2, 0, 1)
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
         return img, lbl

@@ -1,16 +1,17 @@
 #!/usr/bin/env python
 import argparse
-import os
-import os.path as osp
+import context_dataset
 import fcn
 import numpy as np
+import os
+import os.path as osp
+import pascal_dataset, models, utils 
 import skimage.io
 import torch
-from torch.autograd import Variable
 import tqdm
-import pascal_dataset, models, utils 
+
 from tensorboardX import SummaryWriter
-import context_dataset
+from torch.autograd import Variable
 
 import PIL.Image
 
