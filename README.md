@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-This is the PyTorch implementation of the seenmask zeroshot network (SZN) described in "Zero-shot Semantic Segmentation." Please reference this paper (in this directory) to understand the code. 
+This is the PyTorch implementation of the seenmask zeroshot network (SZN) described in Rohan Doshi's senior thesis "Zero-shot Semantic Segmentation." Please reference this paper (rohan_doshi_senior_thesis.pdf) to understand the code.
 
 ## Installation
 
